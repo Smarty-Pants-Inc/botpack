@@ -1,0 +1,53 @@
+{
+  "id": "trust_gated_mcp",
+  "name": "trust-gated MCP server excluded until trust granted",
+  "steps": [
+    {
+      "kind": "write_file",
+      "path": "botpack.toml",
+      "content": "version = 1\n\n[workspace]\ndir = \".botpack/workspace\"\n"
+    },
+    {
+      "kind": "write_file",
+      "path": ".botpack/workspace/mcp/servers.toml",
+      "content": "version = 1\n\n[[server]]\nid = \"postgres\"\nname = \"Postgres\"\ncommand = \"npx\"\nargs = [\"-y\", \"@modelcontextprotocol/server-postgres\"]\n"
+    },
+    {
+      "kind": "run",
+      "argv": ["sync", "--target", "claude", "--manifest", "botpack.toml"],
+      "expectExitCode": 0
+    },
+    {
+      "kind": "capture_file",
+      "path": ".claude/mcp.json"
+    },
+    {
+      "kind": "write_file",
+      "path": ".botpack/trust.toml",
+      "content": "version = 1\n\n[\"__workspace__\"]\nallowExec = true\nallowMcp = true\n"
+    },
+    {
+      "kind": "run",
+      "argv": ["sync", "--target", "claude", "--manifest", "botpack.toml"],
+      "expectExitCode": 0
+    }
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": ".claude/mcp.json"},
+    {"kind": "output_contains", "step": 3, "stream": "stdout", "substr": "\"servers\": []"},
+    {
+      "kind": "json_schema",
+      "path": ".claude/mcp.json",
+      "schema": {
+        "type": "object",
+        "required": ["servers"],
+        "properties": {"servers": {"type": "array", "minItems": 1}}
+      }
+    },
+    {
+      "kind": "file_contains",
+      "path": ".claude/mcp.json",
+      "substr": "workspace/postgres"
+    }
+  ]
+}

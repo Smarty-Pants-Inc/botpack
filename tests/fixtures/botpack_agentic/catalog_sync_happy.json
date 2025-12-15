@@ -1,0 +1,60 @@
+{
+  "id": "catalog_sync_happy",
+  "name": "catalog+sync happy path",
+  "steps": [
+    {
+      "kind": "write_file",
+      "path": "botpack.toml",
+      "content": "version = 1\n\n[workspace]\ndir = \".botpack/workspace\"\n\n[sync]\nlinkMode = \"copy\"\n"
+    },
+    {
+      "kind": "write_file",
+      "path": ".botpack/workspace/skills/hello/SKILL.md",
+      "content": "---\nid: hello\nname: hello\ndescription: test\n---\n"
+    },
+    {
+      "kind": "write_file",
+      "path": ".botpack/workspace/commands/hi.md",
+      "content": "hi\n"
+    },
+    {
+      "kind": "run",
+      "argv": ["catalog", "--manifest", "botpack.toml"],
+      "expectExitCode": 0
+    },
+    {
+      "kind": "run",
+      "argv": ["sync", "--target", "claude", "--manifest", "botpack.toml"],
+      "expectExitCode": 0
+    }
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": ".botpack/catalog.json"},
+    {"kind": "file_exists", "path": ".claude/skills/workspace.hello/SKILL.md"},
+    {"kind": "file_exists", "path": ".claude/commands/workspace.hi.md"},
+    {"kind": "file_contains", "path": ".botpack/catalog.json", "substr": "workspaceAssets"},
+    {
+      "kind": "json_schema",
+      "path": ".botpack/catalog.json",
+      "schema": {
+        "type": "object",
+        "required": ["version", "generatedAt", "workspace", "workspaceAssets", "packages"],
+        "properties": {
+          "version": {"type": "integer", "const": 1},
+          "generatedAt": {"type": "string", "const": "1970-01-01T00:00:00Z"},
+          "workspace": {"type": "object", "required": ["dir"], "properties": {"dir": {"type": "string"}}},
+          "workspaceAssets": {
+            "type": "object",
+            "required": ["skills", "commands", "agents"],
+            "properties": {
+              "skills": {"type": "array"},
+              "commands": {"type": "array"},
+              "agents": {"type": "array"}
+            }
+          },
+          "packages": {"type": "array"}
+        }
+      }
+    }
+  ]
+}
