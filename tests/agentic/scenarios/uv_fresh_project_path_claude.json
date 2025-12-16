@@ -1,0 +1,53 @@
+{
+  "id": "uv_fresh_project_path_claude",
+  "name": "uv fresh install (project root) + path dep + claude sync",
+  "steps": [
+    {
+      "kind": "write_file",
+      "path": "botpack.toml",
+      "content": "version = 1\n"
+    },
+    {
+      "kind": "mkdir",
+      "path": "dep/skills/hello"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/skills/hello/SKILL.md",
+      "content": "---\nid: hello\nname: hello\ndescription: from dep\n---\n"
+    },
+    {
+      "kind": "mkdir",
+      "path": "dep/commands"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/commands/hello.md",
+      "content": "# hello\n"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/agentpkg.toml",
+      "content": "agentpkg = \"0.1\"\nname = \"@acme/quality\"\nversion = \"1.0.0\"\n\n[capabilities]\nexec = false\nnetwork = false\nmcp = false\n"
+    },
+    {
+      "kind": "run_cmd",
+      "argv": ["uv", "venv", "venv"]
+    },
+    {
+      "kind": "run_cmd",
+      "argv": ["uv", "pip", "install", "--python", "venv/bin/python", "{REPO_ROOT}"]
+    },
+    {
+      "kind": "run_cmd",
+      "argv": ["venv/bin/botpack", "get", "@acme/quality", "--path", "dep", "--target", "claude"],
+      "expectExitCode": 0
+    }
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": "botpack.lock"},
+    {"kind": "file_contains", "path": "botpack.lock", "substr": "\"@acme/quality@1.0.0\""},
+    {"kind": "file_exists", "path": ".claude/skills/acme-quality.hello/SKILL.md"},
+    {"kind": "file_exists", "path": ".claude/commands/acme-quality.hello.md"}
+  ]
+}

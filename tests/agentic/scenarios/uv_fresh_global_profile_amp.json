@@ -1,0 +1,48 @@
+{
+  "id": "uv_fresh_global_profile_amp",
+  "name": "uv fresh install (global default profile) + path dep + amp sync",
+  "steps": [
+    {
+      "kind": "mkdir",
+      "path": "dep/skills/hello"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/skills/hello/SKILL.md",
+      "content": "---\nid: hello\nname: hello\ndescription: from dep\n---\n"
+    },
+    {
+      "kind": "mkdir",
+      "path": "dep/commands"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/commands/hello.md",
+      "content": "# hello\n"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/agentpkg.toml",
+      "content": "agentpkg = \"0.1\"\nname = \"@acme/quality\"\nversion = \"1.0.0\"\n\n[capabilities]\nexec = false\nnetwork = false\nmcp = false\n"
+    },
+    {
+      "kind": "run_cmd",
+      "argv": ["uv", "venv", "venv"]
+    },
+    {
+      "kind": "run_cmd",
+      "argv": ["uv", "pip", "install", "--python", "venv/bin/python", "{REPO_ROOT}"]
+    },
+    {
+      "kind": "run_cmd",
+      "argv": ["venv/bin/botpack", "--global", "get", "@acme/quality", "--path", "{WORKDIR}/dep", "--target", "amp"],
+      "expectExitCode": 0
+    }
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": "home/.botpack/profiles/default/botpack.toml"},
+    {"kind": "file_exists", "path": "home/.botpack/profiles/default/botpack.lock"},
+    {"kind": "file_exists", "path": "home/.botpack/profiles/default/.agents/skills/acme-quality.hello/SKILL.md"},
+    {"kind": "file_exists", "path": "home/.botpack/profiles/default/.agents/commands/acme-quality.hello.md"}
+  ]
+}

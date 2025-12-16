@@ -1,0 +1,101 @@
+{
+  "id": "uv_fresh_semver_registry_droid",
+  "name": "uv fresh install + semver registry resolution + droid sync",
+  "steps": [
+    {"kind": "mkdir", "path": "repo"},
+    {"kind": "run_cmd", "cwd": "repo", "argv": ["git", "init", "-q"]},
+
+    {
+      "kind": "write_file",
+      "path": "repo/agentpkg.toml",
+      "content": "agentpkg = \"0.1\"\nname = \"@acme/quality\"\nversion = \"1.0.0\"\n\n[capabilities]\nexec = false\nnetwork = false\nmcp = false\n"
+    },
+    {"kind": "mkdir", "path": "repo/skills/hello"},
+    {
+      "kind": "write_file",
+      "path": "repo/skills/hello/SKILL.md",
+      "content": "---\nid: hello\nname: hello\ndescription: semver\n---\n"
+    },
+    {"kind": "run_cmd", "cwd": "repo", "argv": ["git", "add", "."]},
+    {
+      "kind": "run_cmd",
+      "cwd": "repo",
+      "env": {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com"
+      },
+      "argv": ["git", "commit", "-q", "-m", "v1.0.0"]
+    },
+    {
+      "kind": "run_cmd",
+      "cwd": "repo",
+      "env": {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com"
+      },
+      "argv": ["git", "rev-parse", "HEAD"],
+      "captureVar": "SHA_1_0_0"
+    },
+
+    {
+      "kind": "write_file",
+      "path": "repo/agentpkg.toml",
+      "content": "agentpkg = \"0.1\"\nname = \"@acme/quality\"\nversion = \"1.2.0\"\n\n[capabilities]\nexec = false\nnetwork = false\nmcp = false\n"
+    },
+    {"kind": "run_cmd", "cwd": "repo", "argv": ["git", "add", "agentpkg.toml"]},
+    {
+      "kind": "run_cmd",
+      "cwd": "repo",
+      "env": {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com"
+      },
+      "argv": ["git", "commit", "-q", "-m", "v1.2.0"]
+    },
+    {
+      "kind": "run_cmd",
+      "cwd": "repo",
+      "env": {
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.com"
+      },
+      "argv": ["git", "rev-parse", "HEAD"],
+      "captureVar": "SHA_1_2_0"
+    },
+
+    {"kind": "mkdir", "path": "registry/@acme/quality"},
+    {
+      "kind": "write_file",
+      "path": "registry/@acme/quality/versions.json",
+      "content": "{\n  \"versions\": {\n    \"1.0.0\": {\"git\": \"{WORKDIR}/repo\", \"commit\": \"{SHA_1_0_0}\"},\n    \"1.2.0\": {\"git\": \"{WORKDIR}/repo\", \"commit\": \"{SHA_1_2_0}\"}\n  }\n}\n"
+    },
+    {
+      "kind": "write_file",
+      "path": "botpack.toml",
+      "content": "version = 1\n\n[dependencies]\n\"@acme/quality\" = \"^1\"\n"
+    },
+
+    {"kind": "run_cmd", "argv": ["uv", "venv", "venv"]},
+    {"kind": "run_cmd", "argv": ["uv", "pip", "install", "--python", "venv/bin/python", "{REPO_ROOT}"]},
+    {
+      "kind": "run_cmd",
+      "env": {"BOTPACK_REGISTRY_URL": "file://{WORKDIR}/registry"},
+      "argv": ["venv/bin/botpack", "install"],
+      "expectExitCode": 0
+    },
+    {"kind": "run_cmd", "argv": ["venv/bin/botpack", "sync", "--target", "droid"], "expectExitCode": 0}
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": "botpack.lock"},
+    {"kind": "file_contains", "path": "botpack.lock", "substr": "{SHA_1_2_0}"},
+    {"kind": "file_exists", "path": ".factory/skills/acme-quality.hello/SKILL.md"}
+  ]
+}

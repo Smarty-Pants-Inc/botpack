@@ -79,6 +79,10 @@ def _apply_root_selection(args: argparse.Namespace) -> None:
                 detected = _find_botpack_project_root(Path.cwd())
                 root = (detected or Path.cwd()).resolve()
 
+    # Create explicitly selected roots so `--global/--profile/--root` work from a clean machine.
+    if explicit_root is not None or global_mode or profile:
+        root.mkdir(parents=True, exist_ok=True)
+
     os.environ["BOTPACK_ROOT"] = str(root)
 
     # If a manifest exists at the selected root, thread it through to avoid
@@ -102,6 +106,15 @@ def _build_parser() -> argparse.ArgumentParser:
     mig_sub = mig.add_subparsers(dest="migrate_cmd", required=True)
     mig_smarty = mig_sub.add_parser("from-smarty", help="Copy .smarty into .botpack/workspace")
     mig_smarty.add_argument("--force", action="store_true")
+
+    ag = sub.add_parser("agentic", help="Run agentic rubric-based scenarios")
+    ag_sub = ag.add_subparsers(dest="agentic_cmd", required=True)
+    ag_run = ag_sub.add_parser("run", help="Run scenario JSON files and write a report")
+    ag_run.add_argument("--scenario", type=Path, action="append", default=[])
+    ag_run.add_argument("--scenarios-dir", type=Path, default=None)
+    ag_run.add_argument("--work-root", type=Path, default=None)
+    ag_run.add_argument("--report", type=Path, default=None)
+    ag_run.add_argument("--mode", choices=["direct", "subprocess"], default="subprocess")
 
     add = sub.add_parser("add", help="Add a dependency to botpack.toml")
     add.add_argument("name", help="Either a package name (with --git/--path) or name@versionSpec")
@@ -219,6 +232,30 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
+
+    if args.cmd == "agentic":
+        if args.agentic_cmd != "run":
+            raise AssertionError(f"unhandled agentic cmd: {args.agentic_cmd}")
+
+        from . import paths
+        from .agentic import AgenticRunner, load_scenario_json
+
+        scenario_paths: list[Path] = [Path(p) for p in (args.scenario or [])]
+        if not scenario_paths:
+            if args.scenarios_dir is None:
+                raise ValueError("agentic run: must provide --scenario or --scenarios-dir")
+            scenario_paths = sorted(Path(args.scenarios_dir).glob("*.json"))
+
+        scenarios = [load_scenario_json(p) for p in scenario_paths]
+
+        work_root = Path(args.work_root) if args.work_root is not None else (paths.botyard_dir() / "agentic-work")
+        report_path = Path(args.report) if args.report is not None else (work_root / "report.json")
+
+        runner = AgenticRunner(mode=str(args.mode))
+        report = runner.run_and_write_report(scenarios, work_root=work_root, report_path=report_path)
+
+        print(str(report_path))
+        return 0 if report.get("ok") is True else 1
 
     if args.cmd == "migrate":
         if args.migrate_cmd == "from-smarty":

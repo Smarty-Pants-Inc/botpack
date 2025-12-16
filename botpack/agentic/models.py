@@ -41,7 +41,8 @@ class StepSpec:
     Supported kinds:
       - mkdir: create a directory
       - write_file: write a UTF-8 text file
-      - run: execute botyard CLI
+      - run: execute botpack CLI (python -m botpack.cli or direct invocation)
+      - run_cmd: execute an arbitrary command (used for uv-based E2E)
       - capture_file: read a file into the step result stdout (for deterministic assertions)
     """
 
@@ -50,6 +51,9 @@ class StepSpec:
     content: str | None = None
     argv: list[str] | None = None
     expect_exit_code: int | None = None
+    cwd: str | None = None
+    env: dict[str, str] | None = None
+    capture_var: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,15 +100,25 @@ def load_scenario_json(path: str | Path) -> ScenarioSpec:
         tbl = _expect_dict(s, ctx=f"scenario.steps[{i}]")
         kind = _expect_str(tbl.get("kind"), ctx=f"scenario.steps[{i}].kind")
 
+        cwd = tbl.get("cwd")
+        if cwd is not None:
+            cwd = _expect_str(cwd, ctx=f"scenario.steps[{i}].cwd")
+
+        env_raw = tbl.get("env")
+        env: dict[str, str] | None = None
+        if env_raw is not None:
+            env_tbl = _expect_dict(env_raw, ctx=f"scenario.steps[{i}].env")
+            env = {k: _expect_str(v, ctx=f"scenario.steps[{i}].env.{k}") for k, v in env_tbl.items()}
+
         if kind == "mkdir":
             spath = _expect_str(tbl.get("path"), ctx=f"scenario.steps[{i}].path")
-            steps.append(StepSpec(kind=kind, path=spath))
+            steps.append(StepSpec(kind=kind, path=spath, cwd=cwd, env=env))
             continue
 
         if kind == "write_file":
             spath = _expect_str(tbl.get("path"), ctx=f"scenario.steps[{i}].path")
             content = _expect_str(tbl.get("content"), ctx=f"scenario.steps[{i}].content")
-            steps.append(StepSpec(kind=kind, path=spath, content=content))
+            steps.append(StepSpec(kind=kind, path=spath, content=content, cwd=cwd, env=env))
             continue
 
         if kind == "run":
@@ -113,12 +127,35 @@ def load_scenario_json(path: str | Path) -> ScenarioSpec:
             expect_exit_code = tbl.get("expectExitCode")
             if expect_exit_code is not None:
                 expect_exit_code = _expect_int(expect_exit_code, ctx=f"scenario.steps[{i}].expectExitCode")
-            steps.append(StepSpec(kind=kind, argv=argv, expect_exit_code=expect_exit_code))
+            steps.append(
+                StepSpec(kind=kind, argv=argv, expect_exit_code=expect_exit_code, cwd=cwd, env=env)
+            )
+            continue
+
+        if kind == "run_cmd":
+            argv_raw = _expect_list(tbl.get("argv"), ctx=f"scenario.steps[{i}].argv")
+            argv = [_expect_str(a, ctx=f"scenario.steps[{i}].argv") for a in argv_raw]
+            expect_exit_code = tbl.get("expectExitCode")
+            if expect_exit_code is not None:
+                expect_exit_code = _expect_int(expect_exit_code, ctx=f"scenario.steps[{i}].expectExitCode")
+            capture_var = tbl.get("captureVar")
+            if capture_var is not None:
+                capture_var = _expect_str(capture_var, ctx=f"scenario.steps[{i}].captureVar")
+            steps.append(
+                StepSpec(
+                    kind=kind,
+                    argv=argv,
+                    expect_exit_code=expect_exit_code,
+                    cwd=cwd,
+                    env=env,
+                    capture_var=capture_var,
+                )
+            )
             continue
 
         if kind == "capture_file":
             spath = _expect_str(tbl.get("path"), ctx=f"scenario.steps[{i}].path")
-            steps.append(StepSpec(kind=kind, path=spath))
+            steps.append(StepSpec(kind=kind, path=spath, cwd=cwd, env=env))
             continue
 
         raise ScenarioSpecError(f"scenario.steps[{i}].kind: unsupported kind {kind!r}")
