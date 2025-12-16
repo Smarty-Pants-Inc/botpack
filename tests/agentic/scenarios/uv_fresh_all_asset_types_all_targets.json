@@ -1,0 +1,89 @@
+{
+  "id": "uv_fresh_all_asset_types_all_targets",
+  "name": "uv fresh install + all asset types (skills/commands/agents + PEP723 scripts) + all targets",
+  "steps": [
+    {
+      "kind": "mkdir",
+      "path": "dep/skills/hello"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/skills/hello/SKILL.md",
+      "content": "---\nid: hello\nname: hello\ndescription: from dep\n---\n"
+    },
+    {"kind": "mkdir", "path": "dep/commands"},
+    {"kind": "write_file", "path": "dep/commands/hello.md", "content": "# hello\n"},
+    {"kind": "mkdir", "path": "dep/agents"},
+    {"kind": "write_file", "path": "dep/agents/researcher.md", "content": "# Researcher\n"},
+    {
+      "kind": "write_file",
+      "path": "dep/agentpkg.toml",
+      "content": "agentpkg = \"0.1\"\nname = \"@acme/quality\"\nversion = \"1.0.0\"\n\n[capabilities]\nexec = false\nnetwork = false\nmcp = false\n"
+    },
+
+    {"kind": "mkdir", "path": "proj/.botpack/workspace/skills/ws_hello/scripts"},
+    {
+      "kind": "write_file",
+      "path": "proj/.botpack/workspace/skills/ws_hello/SKILL.md",
+      "content": "---\nid: ws_hello\nname: ws_hello\ndescription: workspace skill\n---\n"
+    },
+    {
+      "kind": "write_file",
+      "path": "proj/.botpack/workspace/skills/ws_hello/scripts/tool.py",
+      "content": "# /// script\n# requires-python = \"!=3.9.*\"\n# dependencies = [\"requests\"]\n# ///\nprint('hi')\n"
+    },
+    {"kind": "mkdir", "path": "proj/.botpack/workspace/commands"},
+    {"kind": "write_file", "path": "proj/.botpack/workspace/commands/ws_cmd.md", "content": "# ws_cmd\n"},
+    {"kind": "mkdir", "path": "proj/.botpack/workspace/agents"},
+    {"kind": "write_file", "path": "proj/.botpack/workspace/agents/ws_agent.md", "content": "# ws_agent\n"},
+
+    {"kind": "run_cmd", "argv": ["uv", "venv", "venv"]},
+    {"kind": "run_cmd", "argv": ["uv", "pip", "install", "--python", "venv/bin/python", "{REPO_ROOT}"]},
+
+    {
+      "kind": "run_cmd",
+      "argv": [
+        "venv/bin/botpack",
+        "--root",
+        "proj",
+        "get",
+        "@acme/quality",
+        "--path",
+        "{WORKDIR}/dep",
+        "--target",
+        "claude"
+      ],
+      "expectExitCode": 0
+    },
+    {"kind": "run_cmd", "argv": ["venv/bin/botpack", "--root", "proj", "sync", "--target", "amp"], "expectExitCode": 0},
+    {"kind": "run_cmd", "argv": ["venv/bin/botpack", "--root", "proj", "sync", "--target", "droid"], "expectExitCode": 0},
+    {"kind": "run_cmd", "argv": ["venv/bin/botpack", "--root", "proj", "catalog"], "expectExitCode": 0}
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": "proj/botpack.lock"},
+    {"kind": "file_exists", "path": "proj/.claude/skills/acme-quality.hello/SKILL.md"},
+    {"kind": "file_exists", "path": "proj/.claude/commands/acme-quality.hello.md"},
+    {"kind": "file_exists", "path": "proj/.claude/agents/acme-quality.researcher.md"},
+    {"kind": "file_exists", "path": "proj/.claude/skills/workspace.ws_hello/SKILL.md"},
+    {"kind": "file_exists", "path": "proj/.claude/commands/workspace.ws_cmd.md"},
+    {"kind": "file_exists", "path": "proj/.claude/agents/workspace.ws_agent.md"},
+
+    {"kind": "file_exists", "path": "proj/.agents/skills/acme-quality.hello/SKILL.md"},
+    {"kind": "file_exists", "path": "proj/.agents/commands/acme-quality.hello.md"},
+    {"kind": "file_exists", "path": "proj/.agents/agents/acme-quality.researcher.md"},
+    {"kind": "file_exists", "path": "proj/.agents/skills/workspace.ws_hello/SKILL.md"},
+    {"kind": "file_exists", "path": "proj/.agents/commands/workspace.ws_cmd.md"},
+    {"kind": "file_exists", "path": "proj/.agents/agents/workspace.ws_agent.md"},
+
+    {"kind": "file_exists", "path": "proj/.factory/skills/acme-quality.hello/SKILL.md"},
+    {"kind": "file_exists", "path": "proj/.factory/commands/acme-quality.hello.md"},
+    {"kind": "file_exists", "path": "proj/.factory/agents/acme-quality.researcher.md"},
+    {"kind": "file_exists", "path": "proj/.factory/skills/workspace.ws_hello/SKILL.md"},
+    {"kind": "file_exists", "path": "proj/.factory/commands/workspace.ws_cmd.md"},
+    {"kind": "file_exists", "path": "proj/.factory/agents/workspace.ws_agent.md"},
+
+    {"kind": "file_exists", "path": "proj/.botpack/catalog.json"},
+    {"kind": "file_contains", "path": "proj/.botpack/catalog.json", "substr": "\"pep723\""},
+    {"kind": "file_contains", "path": "proj/.botpack/catalog.json", "substr": "\"runner\": \"uv\""}
+  ]
+}

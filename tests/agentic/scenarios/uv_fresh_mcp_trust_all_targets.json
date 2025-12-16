@@ -1,0 +1,83 @@
+{
+  "id": "uv_fresh_mcp_trust_all_targets",
+  "name": "uv fresh install + MCP asset + trust gating + all targets",
+  "steps": [
+    {"kind": "mkdir", "path": "dep/mcp"},
+    {
+      "kind": "write_file",
+      "path": "dep/mcp/servers.toml",
+      "content": "version = 1\n\n[[server]]\nid = \"postgres\"\nname = \"Postgres\"\ncommand = \"echo\"\nargs = [\"hi\"]\n"
+    },
+    {"kind": "mkdir", "path": "dep/skills/hello"},
+    {
+      "kind": "write_file",
+      "path": "dep/skills/hello/SKILL.md",
+      "content": "---\nid: hello\nname: hello\ndescription: mcp pack\n---\n"
+    },
+    {
+      "kind": "write_file",
+      "path": "dep/agentpkg.toml",
+      "content": "agentpkg = \"0.1\"\nname = \"@acme/mcp-pack\"\nversion = \"1.0.0\"\n\n[capabilities]\nexec = true\nnetwork = false\nmcp = true\n"
+    },
+
+    {"kind": "run_cmd", "argv": ["uv", "venv", "venv"]},
+    {"kind": "run_cmd", "argv": ["uv", "pip", "install", "--python", "venv/bin/python", "{REPO_ROOT}"]},
+
+    {
+      "kind": "run_cmd",
+      "argv": [
+        "venv/bin/botpack",
+        "--root",
+        "proj",
+        "get",
+        "@acme/mcp-pack",
+        "--path",
+        "{WORKDIR}/dep",
+        "--target",
+        "claude"
+      ],
+      "expectExitCode": 6
+    },
+
+    {
+      "kind": "run_cmd",
+      "argv": [
+        "venv/bin/botpack",
+        "--root",
+        "proj",
+        "trust",
+        "allow",
+        "@acme/mcp-pack@1.0.0",
+        "--exec",
+        "--mcp"
+      ],
+      "expectExitCode": 0
+    },
+
+    {
+      "kind": "run_cmd",
+      "argv": [
+        "venv/bin/botpack",
+        "--root",
+        "proj",
+        "get",
+        "@acme/mcp-pack",
+        "--path",
+        "{WORKDIR}/dep",
+        "--target",
+        "claude"
+      ],
+      "expectExitCode": 0
+    },
+    {"kind": "run_cmd", "argv": ["venv/bin/botpack", "--root", "proj", "sync", "--target", "amp"], "expectExitCode": 0},
+    {"kind": "run_cmd", "argv": ["venv/bin/botpack", "--root", "proj", "sync", "--target", "droid"], "expectExitCode": 0}
+  ],
+  "checks": [
+    {"kind": "file_exists", "path": "proj/.claude/mcp.json"},
+    {"kind": "file_contains", "path": "proj/.claude/mcp.json", "substr": "@acme/mcp-pack/postgres"},
+    {"kind": "file_exists", "path": "proj/.agents/mcp.json"},
+    {"kind": "file_contains", "path": "proj/.agents/mcp.json", "substr": "@acme/mcp-pack/postgres"},
+    {"kind": "file_exists", "path": "proj/.factory/mcp.json"},
+    {"kind": "file_contains", "path": "proj/.factory/mcp.json", "substr": "@acme/mcp-pack/postgres"}
+  ]
+}
