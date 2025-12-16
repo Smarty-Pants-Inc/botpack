@@ -1,23 +1,23 @@
-# Botyard Architecture Spec v0.1
+# Botpack Architecture Spec v0.2
 
 **Subtitle:** “Cargo for agent assets” (dependency + materialization toolchain)
 **Status:** Draft for implementation
-**Audience:** Coding agent orchestrator + parallel dev agents implementing Botyard
+**Audience:** Coding agent orchestrator + parallel dev agents implementing Botpack
 
 ---
 
 ## 0. Executive summary
 
-Botyard is a repo-local toolchain that:
+Botpack is a repo-local toolchain that:
 
 1. **Manages agent assets as versioned dependencies** (skills, commands, agents, MCP configs, policy fragments).
 2. **Materializes those assets into multiple runtimes** (Claude/Amp/Droid/others) via a deterministic `sync` engine.
 3. **Preserves progressive disclosure** by generating a metadata-only catalog and never bundling skill bodies into startup context by default.
 
-This spec assumes Botyard replaces/absorbs the existing legacy CLI responsibilities.
+This spec assumes Botpack replaces/absorbs the existing legacy CLI responsibilities.
 
-Default first‑party workspace directory is **`.botyard/workspace/`**.
-Botyard can also detect and migrate a legacy **`.smarty/`** workspace.
+Default first‑party workspace directory is **`.botpack/workspace/`**.
+Botpack can also detect and migrate a legacy **`.smarty/`** workspace.
 
 ---
 
@@ -26,18 +26,18 @@ Botyard can also detect and migrate a legacy **`.smarty/`** workspace.
 ### 1.1 Goals (must-haves)
 
 * **Deterministic installs**: same manifest + lockfile → identical installed graph and identical on-disk outputs.
-* **Fast and opinionated UX**: `botyard add`, `botyard install`, `botyard sync` should be “do the obvious thing” with minimal configuration.
+* **Fast and opinionated UX**: `botpack add`, `botpack install`, `botpack sync` should be “do the obvious thing” with minimal configuration.
 * **Repo-local, inspectable state**: manifests and generated artifacts are human-readable; no opaque hidden magic.
 * **Multi-runtime output**: one dependency graph → materialized layouts for multiple TUIs/runtimes.
 * **Progressive disclosure**: no startup-context bloating; skills/commands/agents remain discrete files, loaded when invoked.
 * **Safe-by-default**: no arbitrary code execution on install; risk-bearing capabilities require explicit trust.
 
-### 1.2 Non-goals (v0.1)
+### 1.2 Non-goals (v0.2)
 
-* Public central registry is optional; do not block on it.
-* No install scripts (`preinstall/postinstall`) in v0.1 (explicitly disallowed).
+* A hosted registry/search UI is optional; do not block v0.2 on it (Phase 1+2 can be static files + git).
+* No install scripts (`preinstall/postinstall`) in v0.2 (explicitly disallowed).
 * No complex prompt/template composition pipelines (e.g., auto-generating CLAUDE.md/AGENTS.md) by default.
-* No sandbox runtime execution environment (Botyard is not a runner); can be future work.
+* No sandbox runtime execution environment (Botpack is not a runner); can be future work.
 
 ### 1.3 Constraints (inherited from existing repo context)
 
@@ -51,21 +51,42 @@ Botyard can also detect and migrate a legacy **`.smarty/`** workspace.
 
 ### 2.1 Glossary
 
-* **Workspace**: the repo-local canonical source of first-party assets (default `.botyard/workspace/`).
+* **Workspace**: the repo-local canonical source of first-party assets (default `.botpack/workspace/`).
 * **Package**: a versioned bundle of agent assets with a manifest (`agentpkg.toml`).
-* **Project manifest**: repo config declaring dependencies and targets (`botyard.toml`).
-* **Lockfile**: fully resolved dependency graph with integrity hashes (`botyard.lock`).
+* **Project manifest**: repo config declaring dependencies and targets (`botpack.toml`).
+* **Lockfile**: fully resolved dependency graph with integrity hashes (`botpack.lock`).
 * **Store**: global content-addressed cache of fetched packages.
-* **Virtual store**: project-local stable pointers to store entries (`.botyard/pkgs/...`).
+* **Virtual store**: project-local stable pointers to store entries (`.botpack/pkgs/...`).
 * **Target**: a runtime output profile (“claude”, “amp”, “droid”) describing how to materialize assets.
 * **Materialization**: generating runtime-facing directories and aggregated files (symlinks/copies + generated MCP files).
-* **Catalog**: metadata-only index of all available assets in workspace + dependencies (`.botyard/catalog.json`).
+* **Catalog**: metadata-only index of all available assets in workspace + dependencies (`.botpack/catalog.json`).
 * **Capabilities**: declared risk-bearing behaviors (e.g., `exec`, MCP servers). Must be explicitly trusted before activation.
+* **Environment**: a Botpack root that owns a manifest+lock+state (project env or global profile env).
+* **Root**: the directory Botpack operates within (the parent of `botpack.toml` and `.botpack/`).
+* **Profile**: a named global environment under `~/.botpack/profiles/<profile>/`.
 
 ### 2.2 Prime directive
 
 > **Install resolves and fetches. Sync materializes.**
 > `add/remove/update/install` may auto-sync, but the conceptual split remains.
+
+### 2.3 Installed vs materialized (store vs targets)
+
+Botpack intentionally separates:
+
+* **Installed**: content is fetched/resolved and present in the global content-addressed **store** (e.g. `~/.botpack/store/v1/sha256:...`) and referenced by an environment's `botpack.lock`.
+* **Materialized (enabled)**: assets are projected into a runtime-facing **target** (e.g. `.claude/skills/`, `.agents/commands/`, `.factory/...`) via `botpack sync`.
+
+Targets are derived outputs and can always be regenerated from `botpack.lock` + store.
+
+### 2.4 Project vs global environments
+
+Botpack supports multiple environments that share the same global store:
+
+* **Project environment**: a repo-local root (typically the git repo) containing `botpack.toml`/`botpack.lock` and `.botpack/` state.
+* **Global environment**: a user-level root under `~/.botpack/profiles/<profile>/` containing its own `botpack.toml`/`botpack.lock` and `.botpack/` state.
+
+Global environments are intended for “install once, enable everywhere” workflows; project environments are intended for repo-specific reproducibility.
 
 ---
 
@@ -73,15 +94,15 @@ Botyard can also detect and migrate a legacy **`.smarty/`** workspace.
 
 ### 3.1 Required files at repo root
 
-* `botyard.toml` — project manifest (human-editable)
-* `botyard.lock` — lockfile (machine-generated, human-inspectable)
+* `botpack.toml` — project manifest (human-editable)
+* `botpack.lock` — lockfile (machine-generated, human-inspectable)
 
-### 3.2 Botyard repo directory
+### 3.2 Botpack repo directory
 
-Botyard uses a single repo-local directory:
+Botpack uses a single repo-local directory:
 
 ```
-.botyard/
+.botpack/
   workspace/                # first-party assets (intended to be version controlled)
     skills/<id>/SKILL.md
     agents/*.md
@@ -94,7 +115,7 @@ Botyard uses a single repo-local directory:
       mcp.json              # generated aggregate per target (example)
       policy.generated.yaml # only if configured; off by default
   state/
-    sync-<target>.json      # tracks what Botyard materialized (for clean/idempotence)
+    sync-<target>.json      # tracks what Botpack materialized (for clean/idempotence)
   catalog.json              # metadata-only catalog of all assets
   trust.toml                # explicit trust decisions (capabilities approvals)
   targets/
@@ -103,16 +124,16 @@ Botyard uses a single repo-local directory:
 
 ### 3.3 Workspace (first-party assets)
 
-Botyard supports a configurable workspace directory. Default behavior:
+Botpack supports a configurable workspace directory. Default behavior:
 
-* If `.botyard/workspace/` exists: use it.
+* If `.botpack/workspace/` exists: use it.
 * Else, if `.smarty/` exists: treat it as a legacy workspace and prompt to migrate.
-* Else: `by init` creates `.botyard/workspace/`.
+* Else: `botpack init` creates `.botpack/workspace/`.
 
 Workspace layout:
 
 ```
-.botyard/workspace/
+.botpack/workspace/
   skills/<id>/SKILL.md
   agents/*.md
   commands/*.md
@@ -123,10 +144,10 @@ Workspace layout:
 
 ## 4) Asset types and conventions
 
-Botyard recognizes assets by conventional paths in either:
+Botpack recognizes assets botpack conventional paths in either:
 
-* the repo workspace (`.botyard/workspace/...`), or
-* installed packages (inside `.botyard/pkgs/<pkg>/...`).
+* the repo workspace (`.botpack/workspace/...`), or
+* installed packages (inside `.botpack/pkgs/<pkg>/...`).
 
 ### 4.1 Asset types (v0.1)
 
@@ -139,15 +160,15 @@ Botyard recognizes assets by conventional paths in either:
 
 #### 4.1.1 Python skill scripts (UV + PEP 723)
 
-For portable Python scripts inside a skill’s `scripts/` directory, Botyard should support the **UV** workflow:
+For portable Python scripts inside a skill’s `scripts/` directory, Botpack should support the **UV** workflow:
 
-* If a `scripts/*.py` file begins with a **PEP 723** inline metadata block (`# /// script` … `# ///`), Botyard extracts:
+* If a `scripts/*.py` file begins with a **PEP 723** inline metadata block (`# /// script` … `# ///`), Botpack extracts:
 
   * `requires-python`
   * `dependencies`
 
-* Botyard records this metadata in the catalog (see §11) and recommends `uv run <script.py>` as the canonical invocation.
-* Botyard does **not** execute scripts during install/sync; this is cataloging + diagnostics only in v0.1.
+* Botpack records this metadata in the catalog (see §11) and recommends `uv run <script.py>` as the canonical invocation.
+* Botpack does **not** execute scripts during install/sync; this is cataloging + diagnostics only in v0.1.
 
 ### 4.2 Canonical IDs and references
 
@@ -155,14 +176,14 @@ For portable Python scripts inside a skill’s `scripts/` directory, Botyard sho
 * **Asset ID**: local to its package/workspace.
 * **Fully qualified asset reference syntax (AssetRef)**:
 
-  * `@scope/name:<assetId>` (type inferred by alias table or uniqueness)
+  * `@scope/name:<assetId>` (type inferred botpack alias table or uniqueness)
   * or explicit: `@scope/name:skill/<id>`, `@scope/name:command/<id>`, `@scope/name:agent/<id>`
 
-Botyard uses **package-qualified output names** by default to avoid collisions.
+Botpack uses **package-qualified output names** by default to avoid collisions.
 
 ---
 
-## 5) Project manifest: `botyard.toml`
+## 5) Project manifest: `botpack.toml`
 
 ### 5.1 Minimal schema (v0.1)
 
@@ -170,7 +191,7 @@ Botyard uses **package-qualified output names** by default to avoid collisions.
 version = 1
 
 [workspace]
-dir = ".botyard/workspace"
+dir = ".botpack/workspace"
 name = "@yourorg/yourrepo-assets" # optional
 private = true
 
@@ -237,9 +258,68 @@ Allow these forms in `dependencies`:
 Highest wins:
 
 1. CLI flags
-2. Repo `botyard.toml`
-3. User config (optional mid-term): `~/.config/botyard/config.toml`
+2. Environment variables (e.g. `BOTPACK_ROOT`, `BOTPACK_STORE`, `BOTPACK_REGISTRY_URL`)
+3. Environment `botpack.toml`
 4. Defaults
+
+Root selection (which environment you are operating on) MUST be deterministic:
+
+1. `--root <path>`
+2. `--global [--profile <name>]` (maps to `~/.botpack/profiles/<profile>/`)
+3. `BOTPACK_ROOT`
+4. Auto-discover project root by searching up from `cwd` for `botpack.toml`
+5. Fallback: `cwd`
+
+### 5.4 Registry model (phased)
+
+Botpack's registry should be **lightweight**, **cache-friendly**, and **immutable by default**.
+
+#### Phase 1: git-only (no registry)
+
+Packages are referenced directly by git URL (optionally a tag/commit via `rev`). This requires no central infrastructure.
+
+#### Phase 2: static index ("registry")
+
+A registry is a static HTTP site (e.g. GitHub Pages, R2/S3, or GitHub raw files) that serves package metadata.
+
+* Base URL configured via `BOTPACK_REGISTRY_URL`.
+* For a package `@scope/name`, Botpack fetches:
+
+  * `${BOTPACK_REGISTRY_URL}/@scope/name/versions.json`
+
+`versions.json` schema (v0):
+
+```json
+{
+  "schema": 1,
+  "name": "@scope/name",
+  "versions": {
+    "1.2.3": {
+      "source": { "type": "git", "url": "https://github.com/org/repo.git", "rev": "v1.2.3" },
+      "integrity": "sha256:..." 
+    }
+  }
+}
+```
+
+Notes:
+
+* `integrity` is optional at first, but recommended; clients can compute/verify it after fetch.
+* The registry MUST NOT mutate entries for an existing version.
+
+#### Phase 3: signing
+
+Registry metadata and/or artifacts are signed (Sigstore or minisign). Botpack verifies signatures before trusting registry responses.
+
+### 5.5 Publishing UX (fewest steps)
+
+The author path should be:
+
+1. `botpack pkg init` → scaffolds `agentpkg.toml` + conventional folders.
+2. Author adds assets.
+3. `botpack publish` → validates, computes integrity, creates a release artifact (tarball), and updates the registry index.
+
+Implementation can start by supporting a "print registry entry" dry-run to make manual publishing easy, then add first-class GitHub release + registry PR automation.
 
 ---
 
@@ -292,7 +372,7 @@ mcp = false
 
 ---
 
-## 7) Lockfile: `botyard.lock`
+## 7) Lockfile: `botpack.lock`
 
 ### 7.1 Lockfile requirements
 
@@ -316,12 +396,12 @@ mcp = false
 
 ### 7.2 JSON schema sketch (v0.1)
 
-`botyard.lock` is JSON with stable key ordering.
+`botpack.lock` is JSON with stable key ordering.
 
 ```json
 {
   "lockfileVersion": 1,
-  "botyardVersion": "0.1.0",
+  "botpackVersion": "0.2.0",
   "specVersion": "0.1",
   "dependencies": {
     "@acme/quality-skills": "^2.1.0"
@@ -342,7 +422,7 @@ mcp = false
 
 ### 7.3 Resolution invariants (v0.1)
 
-* Botyard MAY install multiple versions of the same package (npm-style) but must keep outputs collision-free via package-qualified names.
+* Botpack MAY install multiple versions of the same package (npm-style) but must keep outputs collision-free via package-qualified names.
 * Resolution must be stable given the same inputs:
 
   * same manifest + same available versions/sources → identical resolved graph
@@ -350,7 +430,7 @@ mcp = false
 
 ### 7.4 Lockfile modes
 
-* `botyard install` respects lockfile by default.
+* `botpack install` respects lockfile by default.
 * `--frozen-lockfile` errors if lockfile would change (CI default).
 
 ---
@@ -366,8 +446,8 @@ mcp = false
 
 ### 8.2 Store location
 
-* macOS/Linux: `~/.botyard/store/v1/`
-* Windows: `%LOCALAPPDATA%\botyard\store\v1\`
+* macOS/Linux: `~/.botpack/store/v1/`
+* Windows: `%LOCALAPPDATA%\botpack\store\v1\`
 
 ### 8.3 Content addressing
 
@@ -378,13 +458,13 @@ mcp = false
   * ignore VCS metadata (`.git/`) when fetching from git
 * Store path:
 
-  * `~/.botyard/store/v1/<hash>/payload/...`
-  * `~/.botyard/store/v1/<hash>/meta.json` (source + manifest + computed file list)
+  * `~/.botpack/store/v1/<hash>/payload/...`
+  * `~/.botpack/store/v1/<hash>/meta.json` (source + manifest + computed file list)
 
 ### 8.4 Project virtual store
 
-* `.botyard/pkgs/<pkg>@<version>/` is a symlink/junction to `store/<hash>/payload/`
-* Botyard must support link fallback modes:
+* `.botpack/pkgs/<pkg>@<version>/` is a symlink/junction to `store/<hash>/payload/`
+* Botpack must support link fallback modes:
 
   * `auto`: prefer symlink/junction; fallback to hardlink; fallback to copy
   * `symlink|hardlink|copy` explicit
@@ -400,7 +480,7 @@ mcp = false
 
 ### 8.6 Garbage collection / pruning (v0.1+)
 
-* Botyard should support pruning unreferenced store entries.
+* Botpack should support pruning unreferenced store entries.
 * The safe baseline behavior is:
 
   * never prune automatically during install/sync
@@ -408,7 +488,7 @@ mcp = false
 
 ### 8.7 Offline-first behavior
 
-* Botyard should support:
+* Botpack should support:
 
   * `--offline` mode (no network; fail if any fetch would be required)
   * prefetching artifacts for CI/airgapped environments
@@ -452,8 +532,8 @@ Implement fetchers in this order:
 ### 10.1 Sync inputs
 
 * Workspace assets from `[workspace.dir]`
-* Installed dependency packages from `.botyard/pkgs/`
-* Target configuration from `botyard.toml`
+* Installed dependency packages from `.botpack/pkgs/`
+* Target configuration from `botpack.toml`
 
 ### 10.2 Sync output responsibilities
 
@@ -469,9 +549,9 @@ For each target:
 * Sync must avoid partial target states:
 
   * compute a full plan first
-  * materialize into a staging directory under `.botyard/generated/<target>/` (or equivalent)
+  * materialize into a staging directory under `.botpack/generated/<target>/` (or equivalent)
   * then apply changes using atomic rename/swap where feasible
-* If interrupted, Botyard should either leave the previous state intact or fail with a recoverable “resume/clean” path.
+* If interrupted, Botpack should either leave the previous state intact or fail with a recoverable “resume/clean” path.
 
 ### 10.3 Target mappings (built-ins)
 
@@ -507,31 +587,31 @@ Default output names are **package-qualified**:
 Rules:
 
 * If two assets map to same output path: error unless one is explicitly aliased/hidden.
-* Aliases in `botyard.toml` can define short names.
+* Aliases in `botpack.toml` can define short names.
 * Alias collisions are errors.
 
 ### 10.5 Sync state tracking
 
-`.botyard/state/sync-<target>.json` records:
+`.botpack/state/sync-<target>.json` records:
 
-* botyard version
+* botpack version
 * target config hash
 * list of materialized paths and their sources (workspace or pkg + asset)
 * generated file checksums
 
 State tracking should also support drift detection:
 
-* if a botyard-managed output has been modified since last sync and is not `--force`, treat as a conflict
+* if a botpack-managed output has been modified since last sync and is not `--force`, treat as a conflict
 
-`botyard sync --clean` removes only paths recorded in the state file that are no longer desired.
+`botpack sync --clean` removes only paths recorded in the state file that are no longer desired.
 
 ### 10.6 Sync modes
 
 * Default: apply changes
 * `--dry-run`: print plan (create/link/remove/generate) without writing
-* `--clean`: remove stale botyard-managed outputs
+* `--clean`: remove stale botpack-managed outputs
 * `--force`: overwrite conflicting unmanaged files only if explicitly requested
-* `--watch`: watch workspace + `.botyard/pkgs` changes; re-sync incrementally
+* `--watch`: watch workspace + `.botpack/pkgs` changes; re-sync incrementally
 
 ---
 
@@ -544,7 +624,7 @@ State tracking should also support drift detection:
 
 ### 11.2 Output
 
-`.botyard/catalog.json`
+`.botpack/catalog.json`
 
 ### 11.3 Schema (v0.1)
 
@@ -552,7 +632,7 @@ State tracking should also support drift detection:
 {
   "version": 1,
   "generatedAt": "2025-12-15T00:00:00Z",
-  "workspace": { "dir": ".botyard/workspace" },
+  "workspace": { "dir": ".botpack/workspace" },
   "packages": [
     {
       "name": "@acme/quality-skills",
@@ -564,10 +644,10 @@ State tracking should also support drift detection:
             "id": "fetch_web",
             "title": "Fetch Web",
             "description": "Retrieves and summarizes web pages.",
-            "path": ".botyard/pkgs/@acme/quality-skills@2.1.0/skills/fetch_web/SKILL.md",
+            "path": ".botpack/pkgs/@acme/quality-skills@2.1.0/skills/fetch_web/SKILL.md",
             "scripts": [
               {
-                "path": ".botyard/pkgs/@acme/quality-skills@2.1.0/skills/fetch_web/scripts/fetch_web.py",
+                "path": ".botpack/pkgs/@acme/quality-skills@2.1.0/skills/fetch_web/scripts/fetch_web.py",
                 "runtime": "python",
                 "runner": "uv",
                 "pep723": {
@@ -633,7 +713,7 @@ PGHOST = "${{env.PGHOST}}"
 ### 12.3 Security gating for MCP
 
 * Any `command/args` server implies capability `exec = true`.
-* Botyard must not materialize those servers into target config unless trusted (see §13).
+* Botpack must not materialize those servers into target config unless trusted (see §13).
 
 ---
 
@@ -641,8 +721,8 @@ PGHOST = "${{env.PGHOST}}"
 
 ### 13.1 Disallowed: install scripts
 
-* Botyard ignores and rejects packages that declare install scripts.
-* If present, `botyard install` fails with an actionable error message.
+* Botpack ignores and rejects packages that declare install scripts.
+* If present, `botpack install` fails with an actionable error message.
 
 ### 13.2 Capabilities + trust
 
@@ -653,7 +733,7 @@ Capabilities (v0.1):
 * `mcp` — package provides MCP servers (informational; combined with exec/url)
 * Future: `fs.read`, `fs.write`, `env`
 
-Trust is stored in `.botyard/trust.toml`:
+Trust is stored in `.botpack/trust.toml`:
 
 ```toml
 version = 1
@@ -673,7 +753,7 @@ allowExec = false
 
 ### 13.2.1 Trust granularity (recommended)
 
-Botyard should support trust decisions at multiple levels:
+Botpack should support trust decisions at multiple levels:
 
 * package-wide (coarse)
 * per MCP server id (common case)
@@ -681,14 +761,14 @@ Botyard should support trust decisions at multiple levels:
 
 ### 13.3 Trust UX
 
-* On `botyard add` or `botyard sync`:
+* On `botpack add` or `botpack sync`:
 
-  * If a package introduces gated capabilities, Botyard prints a clear prompt-style message and fails non-interactively unless `--yes` or explicit `botyard trust ...` has been applied.
+  * If a package introduces gated capabilities, Botpack prints a clear prompt-style message and fails non-interactively unless `--yes` or explicit `botpack trust ...` has been applied.
 * In CI, default to non-interactive; require pre-approved trust file.
 
 ### 13.4 Enterprise policy hooks (optional mid-term)
 
-Support `.botyard/policy.toml` to enforce:
+Support `.botpack/policy.toml` to enforce:
 
 * allowed registries/sources
 * signature requirement
@@ -699,86 +779,87 @@ Support `.botyard/policy.toml` to enforce:
 
 ## 14) CLI specification
 
-Botyard ships two executable names:
+Botpack ships the `botpack` CLI.
 
-* **`by`** — short, fast-to-type primary CLI (recommended)
-* **`botyard`** — optional long-form alias (implemented as a symlink/shim)
+Notes:
 
-Examples below use `by`.
+* Earlier drafts used `botyard`/`by` naming; those are considered legacy and are not required for v0.2.
+
+Examples below use `botpack`.
 
 ### 14.1 Commands (v0.1)
 
 **Core**
 
-* `by init`
+* `botpack init`
 
-  * Creates `botyard.toml` (and `.botyard/workspace/` if missing)
+  * Creates `botpack.toml` (and `.botpack/workspace/` if missing)
   * Detects legacy `.smarty/` and existing `.claude/` and configures targets defaults
 
-* `by add <spec>...`
+* `botpack add <spec>...`
 
-  * Updates `botyard.toml`
+  * Updates `botpack.toml`
   * Resolves + fetches
-  * Updates `botyard.lock`
-  * Runs `by sync` unless `--no-sync`
+  * Updates `botpack.lock`
+  * Runs `botpack sync` unless `--no-sync`
 
-* `by remove <pkg>...`
+* `botpack remove <pkg>...`
 
   * Removes from manifest
   * Updates lockfile
   * Syncs unless `--no-sync`
 
-* `by install`
+* `botpack install`
 
   * Installs from lockfile (or resolves if missing)
   * Respects `--frozen-lockfile`
   * Supports `--offline` (no network)
   * Syncs unless `--no-sync`
 
-* `by update [<pkg>...]`
+* `botpack update [<pkg>...]`
 
   * Re-resolves and updates lockfile
   * Syncs unless `--no-sync`
 
-* `by sync [<target>]`
+* `botpack sync [<target>]`
 
   * Materializes for one or all targets
   * Supports `--dry-run`, `--clean`, `--force`, `--watch`
 
-* `by prefetch`
+* `botpack prefetch`
 
   * Fetches and verifies artifacts needed by the lockfile without materializing targets
 
-* `by verify`
+* `botpack verify`
 
   * Verifies lockfile integrity against the store (rehash/verify content digests)
 
-* `by prune`
+* `botpack prune`
 
   * Prunes unreferenced entries from the global store (explicit; never automatic)
 
 **Introspection**
 
-* `by list` (human-readable)
-* `by list --json`
-* `by tree`
-* `by info <pkg>`
-* `by why <pkg>`
-* `by catalog` (prints location or outputs markdown/json)
+* `botpack list` (human-readable)
+* `botpack list --json`
+* `botpack tree`
+* `botpack info <pkg>`
+* `botpack why <pkg>`
+* `botpack catalog` (prints location or outputs markdown/json)
 
 **Safety**
 
-* `by trust <pkg[@ver]> --allow exec|mcp`
-* `by trust <pkg[@ver]> --deny exec|mcp`
-* `by audit` (lists packages with capabilities + their trust status)
+* `botpack trust <pkg[@ver]> --allow exec|mcp`
+* `botpack trust <pkg[@ver]> --deny exec|mcp`
+* `botpack audit` (lists packages with capabilities + their trust status)
 
 **Health**
 
-* `by doctor` (checks collisions with unmanaged files, and toolchain prerequisites like `uv` when PEP 723 scripts are present)
+* `botpack doctor` (checks collisions with unmanaged files, and toolchain prerequisites like `uv` when PEP 723 scripts are present)
 
 **Migration**
 
-* `by migrate from-legacy`
+* `botpack migrate from-legacy`
 
   * See §15
 
@@ -804,33 +885,33 @@ Examples below use `by`.
 
 ### 15.1 Backward compatibility strategy
 
-* Botyard treats `.botyard/workspace/` as the default workspace root.
-* Legacy `.smarty/` is supported via `by migrate from-legacy`.
-* Botyard does not require converting SKILL.md; it remains canonical.
-* Existing `.claude/skills` fallback remains; Botyard becomes the deterministic “sync owner.”
+* Botpack treats `.botpack/workspace/` as the default workspace root.
+* Legacy `.smarty/` is supported via `botpack migrate from-legacy`.
+* Botpack does not require converting SKILL.md; it remains canonical.
+* Existing `.claude/skills` fallback remains; Botpack becomes the deterministic “sync owner.”
 
-### 15.2 Migration steps (botyard-managed, idempotent)
+### 15.2 Migration steps (botpack-managed, idempotent)
 
-`by migrate from-legacy`:
+`botpack migrate from-legacy`:
 
-1. Create `botyard.toml` if missing with:
+1. Create `botpack.toml` if missing with:
 
-   * `[workspace] dir = ".botyard/workspace"`
+   * `[workspace] dir = ".botpack/workspace"`
    * targets configured (claude/amp/droid)
-2. Create `.botyard/` directory
-3. Generate initial `.botyard/catalog.json`
-4. Run `botyard sync --clean` (optional; default to non-destructive)
+2. Create `.botpack/` directory
+3. Generate initial `.botpack/catalog.json`
+4. Run `botpack sync --clean` (optional; default to non-destructive)
 5. Optionally create a compatibility shim for older workflows (optional):
 
-   * Provide a `smarty` shim that delegates to `by` (best-effort), or
-   * Keep `smarty` as a legacy tool and document Botyard as the new engine
+   * Provide a `smarty` shim that delegates to `botpack` (best-effort), or
+   * Keep `smarty` as a legacy tool and document Botpack as the new engine
 
 ### 15.3 “Do not break workflows”
 
 * If repo already has handcrafted `.claude/skills` content:
 
-  * Botyard will not overwrite unless `--force` or the file is already tracked in `.botyard/state/sync-claude.json`.
-* Botyard should provide `botyard doctor` checks to identify unmanaged collisions.
+  * Botpack will not overwrite unless `--force` or the file is already tracked in `.botpack/state/sync-claude.json`.
+* Botpack should provide `botpack doctor` checks to identify unmanaged collisions.
 
 ---
 
@@ -842,12 +923,12 @@ This section is written so an orchestrator can parallelize implementation.
 
 1. **config**
 
-   * Parse/validate `botyard.toml`, `agentpkg.toml`, `trust.toml`
+   * Parse/validate `botpack.toml`, `agentpkg.toml`, `trust.toml`
    * Provide typed config model + defaults + precedence
 
 2. **lock**
 
-   * Read/write `botyard.lock`
+   * Read/write `botpack.lock`
    * Stable JSON formatting + deterministic ordering
 
 3. **resolver**
@@ -882,7 +963,7 @@ This section is written so an orchestrator can parallelize implementation.
 
    * Compute plan per target (create/link/remove/generate)
    * Apply plan atomically (staging + swap)
-   * Maintain `.botyard/state/sync-*.json`
+   * Maintain `.botpack/state/sync-*.json`
    * Implement `--dry-run`, `--clean`, `--force`
 
 8. **mcp**
@@ -894,7 +975,7 @@ This section is written so an orchestrator can parallelize implementation.
 
 9. **catalog**
 
-   * Generate `.botyard/catalog.json`
+   * Generate `.botpack/catalog.json`
    * Metadata-only extraction rules
 
 10. **cli**
@@ -925,15 +1006,15 @@ This section is written so an orchestrator can parallelize implementation.
 
 Create fixture repos with:
 
-* Workspace-only assets (`.botyard/workspace/...`)
+* Workspace-only assets (`.botpack/workspace/...`)
 * Dependencies-only assets
 * Mixed workspace + dependencies
 * MCP packages requiring trust
 
 For each, verify:
 
-* `botyard install --frozen-lockfile` is deterministic
-* `botyard sync --clean` is idempotent
+* `botpack install --frozen-lockfile` is deterministic
+* `botpack sync --clean` is idempotent
 * output directory trees match committed golden snapshots (per OS/link mode)
 * collisions produce expected exit code and message
 * trust gating blocks MCP exec servers until approved
@@ -951,7 +1032,7 @@ For each, verify:
 
 ### 17.4 Agentic rubric-based end-to-end tests (must-have)
 
-Botyard should ship an agentic test harness that validates real workflows by instructing **multiple parallel agents** to perform end-to-end scenarios and then grading results against a **rubric**.
+Botpack should ship an agentic test harness that validates real workflows botpack instructing **multiple parallel agents** to perform end-to-end scenarios and then grading results against a **rubric**.
 
 Principles:
 
@@ -988,7 +1069,7 @@ Minimum required scenarios:
 
 ### Stream B — Config + schema validation
 
-* TOML parsing + schema validation for `botyard.toml`, `agentpkg.toml`, `trust.toml`
+* TOML parsing + schema validation for `botpack.toml`, `agentpkg.toml`, `trust.toml`
 * Defaults + precedence
 * Helpful error messages
 
@@ -1015,7 +1096,7 @@ Minimum required scenarios:
 
 * Workspace/package asset discovery
 * Frontmatter parsing and metadata extraction
-* `.botyard/catalog.json` generation
+* `.botpack/catalog.json` generation
 
 **Done when:** catalog lists assets without reading full bodies.
 
@@ -1025,7 +1106,7 @@ Minimum required scenarios:
 * claude/amp/droid targets
 * collision resolution + aliasing + state tracking + clean
 
-**Done when:** repeated sync is idempotent; clean removes only botyard-managed outputs.
+**Done when:** repeated sync is idempotent; clean removes only botpack-managed outputs.
 
 ### Stream G — MCP merge + trust gating
 
@@ -1038,11 +1119,11 @@ Minimum required scenarios:
 
 ### Stream H — Migration tooling + compatibility
 
-* `by migrate from-legacy`
+* `botpack migrate from-legacy`
 * Optional legacy CLI shim or compatibility notes
-* Detect and migrate `.smarty/` into `.botyard/workspace/`
+* Detect and migrate `.smarty/` into `.botpack/workspace/`
 
-**Done when:** existing repo can adopt botyard without breaking `.claude/skills` workflows.
+**Done when:** existing repo can adopt botpack without breaking `.claude/skills` workflows.
 
 ### Stream I — Docs + examples + CI
 
@@ -1058,7 +1139,7 @@ Minimum required scenarios:
 
 ### MVP includes
 
-* `botyard.toml` + `botyard.lock`
+* `botpack.toml` + `botpack.lock`
 * CAS store + virtual store
 * Git + path dependencies
 * Integrity verification (lockfile ↔ store)
@@ -1080,9 +1161,9 @@ Minimum required scenarios:
 
 ### Recommended evolution path
 
-* Provide a best-effort legacy shim (optional) that delegates to `by` for common commands.
-* Move existing “sync outputs to runtimes” logic under Botyard’s `sync` engine.
-* Preserve existing progressive-disclosure flows by keeping:
+* Provide a best-effort legacy shim (optional) that delegates to `botpack` for common commands.
+* Move existing “sync outputs to runtimes” logic under Botpack’s `sync` engine.
+* Preserve existing progressive-disclosure flows botpack keeping:
   * `by catalog` (metadata-only)
   * `by info` / `by why` for graph introspection
   * (optional) `by open <asset>` for jumping to source paths
@@ -1095,7 +1176,7 @@ Minimum required scenarios:
 1. Initialize repo:
 
 ```bash
-by init
+botpack init
 ```
 
 2. Add dependency skill packs:
@@ -1108,7 +1189,7 @@ by add @acme/quality-skills@^2
 
 ```bash
 by install --frozen-lockfile --no-sync
-by sync claude --clean
+botpack sync claude --clean
 ```
 
 4. Trust MCP pack explicitly:
@@ -1116,20 +1197,20 @@ by sync claude --clean
 ```bash
 by add @acme/mcp-pack@^0.3
 by trust @acme/mcp-pack@0.3.0 --allow exec --allow mcp
-by sync claude
+botpack sync claude
 ```
 
 ---
 
 ## Appendix B — Open decisions (safe defaults chosen unless stated)
 
-These are implementation choices Botyard should hardcode initially, with later configurability:
+These are implementation choices Botpack should hardcode initially, with later configurability:
 
 * Integrity hash: **BLAKE3** recommended (fast), fallback SHA-256 if needed.
 * Default output naming: **package-qualified** to avoid collisions.
-* Default workspace dir: `.botyard/workspace/` if present; if `.smarty/` exists treat as legacy and prompt to migrate; otherwise create `.botyard/workspace/`.
+* Default workspace dir: `.botpack/workspace/` if present; if `.smarty/` exists treat as legacy and prompt to migrate; otherwise create `.botpack/workspace/`.
 * Default link mode: `auto`.
 
 ---
 
-If you want this spec translated into an orchestrator-ready “task graph” (tickets with owners, dependencies, acceptance tests, and file-level touch points), I can output a structured plan (YAML/JSON) keyed by the work streams above.
+If you want this spec translated into an orchestrator-ready “task graph” (tickets with owners, dependencies, acceptance tests, and file-level touch points), I can output a structured plan (YAML/JSON) keyed botpack the work streams above.

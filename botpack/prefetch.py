@@ -5,10 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import parse_agentpkg_toml, parse_botyard_toml_file
-from .fetch import fetch_git, fetch_path
+from .fetch import FetchError, fetch_git, fetch_path
 from .lock import Lockfile, Package, package_key, save_lock
 from .models import GitDependency, PathDependency, SemverDependency, UrlDependency
 from .paths import botyard_dir, work_root
+from .registry import resolve_semver_dependency
 from .store import store_put_tree
 
 
@@ -82,8 +83,34 @@ def prefetch(
             )
             continue
 
-        if isinstance(dep, (SemverDependency, UrlDependency)):
-            raise NotImplementedError("registry/url dependencies not implemented in v0.1")
+        if isinstance(dep, SemverDependency):
+            if offline:
+                raise FetchError(f"offline: registry dependency not cached: {dep_name}@{dep.spec}")
+
+            rr = resolve_semver_dependency(name=dep_name, spec=dep.spec)
+            git_dep = rr.as_git_dependency()
+
+            fetched = fetch_git(git_dep, cache_dir=cache_dir, offline=offline)
+            stored = store_put_tree(fetched.path)
+            pkg_manifest = fetched.path / "agentpkg.toml"
+            pkg_cfg = parse_agentpkg_toml(pkg_manifest)
+            key = package_key(pkg_cfg.name, pkg_cfg.version)
+
+            packages[key] = Package(
+                source={"type": "git", "url": git_dep.git, "rev": git_dep.rev},
+                resolved=fetched.resolved,
+                integrity=stored.digest,
+                dependencies={},
+                capabilities={
+                    "exec": bool(pkg_cfg.capabilities.exec),
+                    "network": bool(pkg_cfg.capabilities.network),
+                    "mcp": bool(pkg_cfg.capabilities.mcp),
+                },
+            )
+            continue
+
+        if isinstance(dep, UrlDependency):
+            raise NotImplementedError("url dependencies not implemented in v0.1")
 
         raise AssertionError(f"unknown dependency type: {dep!r}")
 

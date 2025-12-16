@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from .catalog import generate_and_write_catalog
@@ -10,23 +11,116 @@ from .lock import LockfileError
 from .sync import sync
 
 
+def _find_botpack_project_root(start: Path) -> Path | None:
+    """Find the nearest parent containing a botpack workspace manifest.
+
+    Prefer `botpack.toml`, but also accept legacy `botyard.toml`.
+    """
+
+    cur = start.resolve()
+    for p in (cur, *cur.parents):
+        if (p / "botpack.toml").exists() or (p / "botyard.toml").exists():
+            return p
+    return None
+
+
+def _default_manifest_for_root(root: Path) -> Path | None:
+    new = root / "botpack.toml"
+    if new.exists():
+        return new
+    old = root / "botyard.toml"
+    if old.exists():
+        return old
+    return None
+
+
+def _apply_root_selection(args: argparse.Namespace) -> None:
+    """Select a BOTPACK_ROOT for this CLI invocation.
+
+    Precedence:
+      1) Explicit CLI flags: --root / --global / --profile
+      2) An explicit --manifest path (use its parent)
+      3) Existing environment variables (BOTPACK_ROOT/BOTYARD_ROOT/SMARTY_ROOT)
+      4) Auto-detect by walking up from cwd to find botpack.toml/botyard.toml
+      5) Fallback to cwd
+
+    If we auto-detect a manifest, also thread it into args.manifest (when present)
+    so downstream code resolves relative paths from the manifest parent rather
+    than the current working directory.
+    """
+
+    explicit_root: Path | None = getattr(args, "root", None)
+    global_mode: bool = bool(getattr(args, "global_mode", False))
+    profile: str | None = getattr(args, "profile", None)
+
+    if explicit_root is not None and (global_mode or profile):
+        raise ValueError("--root cannot be combined with --global/--profile")
+
+    root: Path
+    if explicit_root is not None:
+        root = Path(explicit_root).expanduser().resolve()
+    elif global_mode or profile:
+        # Global environments live under ~/.botpack/profiles/<profile>/.
+        prof = profile or "default"
+        root = (Path.home() / ".botpack" / "profiles" / prof).resolve()
+    else:
+        manifest: Path | None = getattr(args, "manifest", None)
+        if manifest is not None:
+            root = Path(manifest).expanduser().resolve().parent
+        else:
+            env_root = (
+                os.environ.get("BOTPACK_ROOT")
+                or os.environ.get("BOTYARD_ROOT")
+                or os.environ.get("SMARTY_ROOT")
+            )
+            if env_root:
+                root = Path(env_root).expanduser().resolve()
+            else:
+                detected = _find_botpack_project_root(Path.cwd())
+                root = (detected or Path.cwd()).resolve()
+
+    os.environ["BOTPACK_ROOT"] = str(root)
+
+    # If a manifest exists at the selected root, thread it through to avoid
+    # resolving workspace/dep paths relative to cwd.
+    if hasattr(args, "manifest") and getattr(args, "manifest", None) is None:
+        default_manifest = _default_manifest_for_root(root)
+        if default_manifest is not None:
+            setattr(args, "manifest", default_manifest)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="botpack")
+    root_group = p.add_mutually_exclusive_group(required=False)
+    root_group.add_argument("--root", type=Path, default=None)
+    root_group.add_argument("--global", dest="global_mode", action="store_true")
+    p.add_argument("--profile", type=str, default=None)
+
     sub = p.add_subparsers(dest="cmd", required=True)
 
     mig = sub.add_parser("migrate", help="Migrate legacy workspace layouts")
     mig_sub = mig.add_subparsers(dest="migrate_cmd", required=True)
     mig_smarty = mig_sub.add_parser("from-smarty", help="Copy .smarty into .botpack/workspace")
-    mig_smarty.add_argument("--root", type=Path, default=None)
     mig_smarty.add_argument("--force", action="store_true")
 
     add = sub.add_parser("add", help="Add a dependency to botpack.toml")
-    add.add_argument("name")
+    add.add_argument("name", help="Either a package name (with --git/--path) or name@versionSpec")
     add.add_argument("--manifest", type=Path, default=None)
-    src = add.add_mutually_exclusive_group(required=True)
+    src = add.add_mutually_exclusive_group(required=False)
     src.add_argument("--path", dest="dep_path")
     src.add_argument("--git", dest="git_url")
     add.add_argument("--rev", default=None)
+
+    get = sub.add_parser("get", help="One-line install: add + install + sync")
+    get.add_argument("name", help="Either a package name (with --git/--path) or name@versionSpec")
+    get.add_argument("--manifest", type=Path, default=None)
+    get.add_argument("--lockfile", type=Path, default=None)
+    get.add_argument("--offline", action="store_true")
+    get.add_argument("--target", default="claude")
+    gsrc = get.add_mutually_exclusive_group(required=False)
+    gsrc.add_argument("--path", dest="dep_path")
+    gsrc.add_argument("--git", dest="git_url")
+    get.add_argument("--rev", default=None)
 
     rem = sub.add_parser("remove", help="Remove a dependency from botpack.toml")
     rem.add_argument("name")
@@ -103,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    _apply_root_selection(args)
+
     try:
         return _run(args)
     except BotyardConfigError as e:
@@ -129,7 +225,7 @@ def _run(args: argparse.Namespace) -> int:
             from .migrate import migrate_from_smarty
             from .paths import work_root
 
-            root = (args.root or work_root()).resolve()
+            root = work_root().resolve()
             try:
                 migrate_from_smarty(root=root, force=bool(args.force))
             except FileNotFoundError as e:
@@ -141,16 +237,38 @@ def _run(args: argparse.Namespace) -> int:
 
     if args.cmd == "add":
         from .config import botyard_manifest_path
-        from .manifest_edit import add_git_dependency, add_path_dependency
+        from .manifest import parse_add_spec
+        from .manifest_edit import add_git_dependency, add_path_dependency, add_semver_dependency
 
         manifest = args.manifest or botyard_manifest_path()
         if args.dep_path:
             add_path_dependency(manifest, name=str(args.name), dep_path=str(args.dep_path))
         elif args.git_url:
             add_git_dependency(manifest, name=str(args.name), url=str(args.git_url), rev=args.rev)
-        else:  # pragma: no cover (argparse enforces)
-            raise ValueError("add requires --path or --git")
+        else:
+            name, spec = parse_add_spec(str(args.name))
+            add_semver_dependency(manifest, name=name, spec=spec)
         return 0
+
+    if args.cmd == "get":
+        from .config import botyard_manifest_path
+        from .install import install
+        from .manifest import parse_add_spec
+        from .manifest_edit import add_git_dependency, add_path_dependency, add_semver_dependency
+
+        manifest = args.manifest or botyard_manifest_path()
+        if args.dep_path:
+            add_path_dependency(manifest, name=str(args.name), dep_path=str(args.dep_path))
+        elif args.git_url:
+            add_git_dependency(manifest, name=str(args.name), url=str(args.git_url), rev=args.rev)
+        else:
+            name, spec = parse_add_spec(str(args.name))
+            add_semver_dependency(manifest, name=name, spec=spec)
+
+        install(manifest_path=manifest, lock_path=args.lockfile, offline=bool(args.offline))
+
+        res = sync(target=str(args.target), manifest_path=manifest)
+        return 2 if res.conflicts else 0
 
     if args.cmd == "remove":
         from .config import botyard_manifest_path
