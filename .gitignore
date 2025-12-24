@@ -9,3 +9,4 @@ __pycache__/
 .beads/
 .beads-legacy/
 deletions.jsonl
+dist/

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -116,6 +117,90 @@ def _build_parser() -> argparse.ArgumentParser:
     ag_run.add_argument("--report", type=Path, default=None)
     ag_run.add_argument("--mode", choices=["direct", "subprocess"], default="subprocess")
 
+    tui = sub.add_parser("tui", help="TUI/tmux helpers and lightweight test matrix artifacts")
+    tui_sub = tui.add_subparsers(dest="tui_cmd", required=True)
+
+    tm = tui_sub.add_parser("tmux", help="Run a TUI in an isolated tmux server and capture transcripts")
+    tm.add_argument("tui", choices=["opencode", "droid", "codex", "coder", "claude", "amp"])
+    tm.add_argument("action", choices=["start", "attach", "send", "sendkey", "peek", "kill", "status"])
+    tm.add_argument("args", nargs=argparse.REMAINDER)
+    tm.add_argument("--repo-root", type=Path, default=None)
+    tm.add_argument("--sock", type=str, default=None)
+    tm.add_argument("--sess", type=str, default=None)
+    tm.add_argument("--art", type=Path, default=None)
+    tm.add_argument("--no-reuse", action="store_true")
+    tm.add_argument("--env-file", type=Path, default=None)
+    tm.add_argument("--env-cmd", type=str, default=None)
+    tm.add_argument("--model", type=str, default=None)
+    tm.add_argument("--agent", type=str, default=None)
+    tm.add_argument("--droid-args", type=str, default=None)
+
+    mx = tui_sub.add_parser("matrix", help="Create/update a simple TUI test matrix results.json")
+    mx_sub = mx.add_subparsers(dest="matrix_cmd", required=True)
+
+    mx_new = mx_sub.add_parser("new", help="Create a new matrix run directory")
+    mx_new.add_argument("--out-root", type=Path, default=Path("dist/tests"))
+
+    mx_start = mx_sub.add_parser("start", help="Start a TUI tmux session scoped to a matrix run")
+    mx_start.add_argument("--run-dir", type=Path, required=True)
+    mx_start.add_argument("tui", choices=["opencode", "droid", "codex", "coder", "claude", "amp"])
+    mx_start.add_argument("--repo-root", type=Path, default=None)
+    mx_start.add_argument("--env-file", type=Path, default=None)
+    mx_start.add_argument("--env-cmd", type=str, default=None)
+    mx_start.add_argument("--model", type=str, default=None)
+    mx_start.add_argument("--agent", type=str, default=None)
+    mx_start.add_argument("--droid-args", type=str, default=None)
+
+    mx_send = mx_sub.add_parser("send", help="Send text to an existing matrix TUI session")
+    mx_send.add_argument("--run-dir", type=Path, required=True)
+    mx_send.add_argument("tui", choices=["opencode", "droid", "codex", "coder", "claude", "amp"])
+    mx_send.add_argument("text", nargs=argparse.REMAINDER)
+
+    mx_peek = mx_sub.add_parser("peek", help="Capture the current screen of a matrix TUI session")
+    mx_peek.add_argument("--run-dir", type=Path, required=True)
+    mx_peek.add_argument("tui", choices=["opencode", "droid", "codex", "coder", "claude", "amp"])
+
+    mx_kill = mx_sub.add_parser("kill", help="Kill a matrix TUI session")
+    mx_kill.add_argument("--run-dir", type=Path, required=True)
+    mx_kill.add_argument("tui", choices=["opencode", "droid", "codex", "coder", "claude", "amp"])
+
+    mx_rec = mx_sub.add_parser("record", help="Append a feature result entry to results.json")
+    mx_rec.add_argument("--run-dir", type=Path, required=True)
+    mx_rec.add_argument("--tui", type=str, required=True)
+    mx_rec.add_argument("--feature", type=str, required=True)
+    mx_rec.add_argument("--status", choices=["PASS", "FAIL", "PARTIAL", "N/A", "BLOCKED"], required=True)
+    mx_rec.add_argument("--evidence", type=str, default="")
+    mx_rec.add_argument("--artifacts", type=str, default="")
+    mx_rec.add_argument("--notes", type=str, default="")
+
+    mx_run = mx_sub.add_parser("run", help="Run a full fresh-install E2E matrix and record results")
+    mx_run.add_argument("--out-root", type=Path, default=Path("dist/tests"))
+    mx_run.add_argument(
+        "--tui",
+        action="append",
+        default=[],
+        choices=["opencode", "droid", "codex", "coder", "claude", "amp"],
+        help="Limit run to specific TUIs (repeatable)",
+    )
+    mx_run.add_argument("--dry-run", action="store_true", help="Do not execute subprocesses (unit-test mode)")
+
+    cfg = tui_sub.add_parser("config", help="Home-config helpers (print snippets or apply managed edits)")
+    cfg_sub = cfg.add_subparsers(dest="config_cmd", required=False)
+
+    # Back-compat: `botpack tui config <tui>` prints.
+    cfg.add_argument("legacy_tui", nargs="?", choices=["codex", "coder", "amp"], default=None)
+
+    cfg_print = cfg_sub.add_parser("print", help="Print a home-config snippet")
+    cfg_print.add_argument("tui", choices=["codex", "coder", "amp"])
+    cfg_print.add_argument("--out", type=Path, default=None)
+
+    cfg_apply = cfg_sub.add_parser("apply", help="Apply snippet to a home-config file safely")
+    cfg_apply.add_argument("tui", choices=["codex", "coder", "amp"])
+    cfg_apply.add_argument("--path", type=Path, default=None)
+    cfg_apply.add_argument("--dry-run", action="store_true")
+    cfg_apply.add_argument("--backup", action="store_true")
+    cfg_apply.add_argument("--force", action="store_true")
+
     add = sub.add_parser("add", help="Add a dependency to botpack.toml")
     add.add_argument("name", help="Either a package name (with --git/--path) or name@versionSpec")
     add.add_argument("--manifest", type=Path, default=None)
@@ -203,6 +288,23 @@ def _build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("prune", help="Delete unreferenced store entries")
     pr.add_argument("--lockfile", type=Path, required=True)
     pr.add_argument("--dry-run", action="store_true")
+
+    mcp = sub.add_parser("mcp", help="MCP utilities")
+    mcp_sub = mcp.add_subparsers(dest="mcp_cmd", required=True)
+    mcp_smoke = mcp_sub.add_parser("smoke", help="Run a read-only smoke test against a stdio MCP server")
+    mcp_smoke.add_argument("--command", type=str, default=None)
+    mcp_smoke.add_argument("--args", action="append", default=[])
+    mcp_smoke.add_argument("--server-name", type=str, default=None)
+    mcp_smoke.add_argument("--cwd", type=Path, default=None)
+    mcp_smoke.add_argument("--out", type=Path, default=None)
+
+    logs = sub.add_parser("logs", help="Logs helpers")
+    logs_sub = logs.add_subparsers(dest="logs_cmd", required=True)
+    logs_grep = logs_sub.add_parser("grep", help="Grep across known TUI logs")
+    logs_grep.add_argument("--pattern", required=True)
+    logs_grep.add_argument("--tui", default="all", choices=["all", "claude", "opencode", "codex", "coder", "droid", "amp"])
+    logs_grep.add_argument("--max-hits", type=int, default=50)
+    logs_grep.add_argument("--since", default=None)
     return p
 
 
@@ -256,6 +358,179 @@ def _run(args: argparse.Namespace) -> int:
 
         print(str(report_path))
         return 0 if report.get("ok") is True else 1
+
+    if args.cmd == "tui":
+        from .tui.matrix import MatrixRun
+        from .tui.tmux import TmuxSession
+
+        repo_root = Path(args.repo_root).resolve() if getattr(args, "repo_root", None) is not None else Path.cwd().resolve()
+
+        if args.tui_cmd == "tmux":
+            tui_name = args.tui
+            sess = TmuxSession.ensure(
+                tui=tui_name,
+                repo_root=repo_root,
+                sock=args.sock,
+                sess=args.sess,
+                art_dir=args.art,
+                reuse_latest=not bool(args.no_reuse),
+            )
+
+            if args.action == "start":
+                sess.start(
+                    env_file=args.env_file,
+                    env_cmd=args.env_cmd,
+                    model=args.model,
+                    agent=args.agent,
+                    droid_args=args.droid_args,
+                )
+                print(str(sess.art_dir))
+                return 0
+            if args.action == "attach":
+                sess.attach()
+                return 0
+            if args.action == "send":
+                text = " ".join(args.args or []).strip()
+                sess.send(text)
+                return 0
+            if args.action == "sendkey":
+                sess.sendkey(*(args.args or []))
+                return 0
+            if args.action == "peek":
+                print(sess.peek(), end="")
+                return 0
+            if args.action == "kill":
+                sess.kill()
+                return 0
+            if args.action == "status":
+                print(sess.status(), end="")
+                return 0
+            raise AssertionError(f"unhandled tmux action: {args.action}")
+
+        if args.tui_cmd == "config":
+            from .tui.config_snippets import snippet_for
+            from .tui.home_config import apply_mcp_magic_number_home_config
+
+            # Legacy: `botpack tui config <tui>`
+            if args.config_cmd is None and getattr(args, "legacy_tui", None) is not None:
+                _fmt, text = snippet_for(str(args.legacy_tui))
+                print(text, end="")
+                return 0
+
+            if args.config_cmd == "print":
+                _fmt, text = snippet_for(str(args.tui))
+                if args.out is not None:
+                    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+                    Path(args.out).write_text(text, encoding="utf-8")
+                print(text, end="")
+                return 0
+
+            if args.config_cmd == "apply":
+                res = apply_mcp_magic_number_home_config(
+                    tui=str(args.tui),
+                    path=Path(args.path).expanduser().resolve() if args.path is not None else None,
+                    dry_run=bool(args.dry_run),
+                    backup=bool(args.backup),
+                    force=bool(args.force),
+                )
+                if res.status == "conflict":
+                    print(f"conflict: {res.message}")
+                    return 2
+                if res.status == "error":
+                    print(f"error: {res.message}")
+                    return 1
+                # ok
+                print(str(res.path))
+                return 0
+
+            raise AssertionError(f"unhandled config cmd: {args.config_cmd}")
+
+        if args.tui_cmd == "matrix":
+            run_dir = Path(getattr(args, "run_dir", repo_root)).resolve() if hasattr(args, "run_dir") else None
+
+            def session_json_path(run_dir: Path, tui: str) -> Path:
+                return run_dir / tui / "session.json"
+
+            if args.matrix_cmd == "new":
+                mr = MatrixRun.create(out_root=Path(args.out_root).resolve())
+                print(str(mr.run_dir))
+                return 0
+
+            if args.matrix_cmd == "start":
+                if run_dir is None:
+                    raise ValueError("matrix start: missing --run-dir")
+                t = args.tui
+                art = run_dir / t / "tmux"
+                s = TmuxSession.ensure(tui=t, repo_root=repo_root, art_dir=art, reuse_latest=False)
+                s.start(
+                    env_file=args.env_file,
+                    env_cmd=args.env_cmd,
+                    model=args.model,
+                    agent=args.agent,
+                    droid_args=args.droid_args,
+                )
+                sp = session_json_path(run_dir, t)
+                sp.parent.mkdir(parents=True, exist_ok=True)
+                sp.write_text(
+                    json.dumps({"tui": t, "sock": s.sock, "sess": s.sess, "art": str(s.art_dir)}, sort_keys=True, indent=2)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                print(str(s.art_dir))
+                return 0
+
+            if args.matrix_cmd in {"send", "peek", "kill"}:
+                if run_dir is None:
+                    raise ValueError(f"matrix {args.matrix_cmd}: missing --run-dir")
+                t = args.tui
+                sp = session_json_path(run_dir, t)
+                if not sp.exists():
+                    raise FileNotFoundError(str(sp))
+                data = json.loads(sp.read_text(encoding="utf-8"))
+                s = TmuxSession.ensure(
+                    tui=t,
+                    repo_root=repo_root,
+                    sock=str(data.get("sock")),
+                    sess=str(data.get("sess")),
+                    art_dir=Path(str(data.get("art"))),
+                    reuse_latest=False,
+                )
+
+                if args.matrix_cmd == "send":
+                    text = " ".join(args.text or []).strip()
+                    s.send(text)
+                    return 0
+                if args.matrix_cmd == "peek":
+                    print(s.peek(), end="")
+                    return 0
+                if args.matrix_cmd == "kill":
+                    s.kill()
+                    return 0
+
+            if args.matrix_cmd == "record":
+                mr = MatrixRun.load(run_dir)
+                mr.record(
+                    tui=str(args.tui),
+                    feature=str(args.feature),
+                    status=str(args.status),
+                    evidence=str(args.evidence or ""),
+                    artifacts=str(args.artifacts or ""),
+                    notes=str(args.notes or ""),
+                )
+                return 0
+
+            if args.matrix_cmd == "run":
+                from .tui.matrix_run import RunConfig, run_matrix
+
+                tuis = tuple(args.tui) if args.tui else ("claude", "opencode", "codex", "coder", "droid", "amp")
+                cfg = RunConfig(out_root=Path(args.out_root).resolve(), tuis=tuis, dry_run=bool(args.dry_run))
+                out_dir = run_matrix(cfg)
+                print(str(out_dir))
+                return 0
+
+            raise AssertionError(f"unhandled matrix cmd: {args.matrix_cmd}")
+
+        raise AssertionError(f"unhandled tui cmd: {args.tui_cmd}")
 
     if args.cmd == "migrate":
         if args.migrate_cmd == "from-smarty":
@@ -447,6 +722,42 @@ def _run(args: argparse.Namespace) -> int:
         res = prune_store(lock_path=args.lockfile, dry_run=bool(args.dry_run))
         for r in res.removed:
             print(r)
+        return 0
+
+    if args.cmd == "mcp":
+        from .mcp_smoke import run_smoke
+
+        if args.mcp_cmd != "smoke":
+            raise AssertionError(f"unhandled mcp cmd: {args.mcp_cmd}")
+
+        res = run_smoke(
+            cmd=args.command,
+            args=list(args.args or []) or None,
+            server_name=args.server_name,
+            cwd=Path(args.cwd).resolve() if args.cwd is not None else None,
+        )
+        payload = json.dumps(res.to_dict(), sort_keys=True, indent=2) + "\n"
+        if args.out is not None:
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.out).write_text(payload, encoding="utf-8")
+        print(payload, end="")
+        return 0 if res.ok else 1
+
+    if args.cmd == "logs":
+        from .logs_grep import grep
+
+        if args.logs_cmd != "grep":
+            raise AssertionError(f"unhandled logs cmd: {args.logs_cmd}")
+
+        results = grep(pattern=str(args.pattern), tui=str(args.tui), max_hits=int(args.max_hits), since=args.since)
+        total = 0
+        for tui, hits in results:
+            print(f"=== {tui} ({len(hits)} hits) ===")
+            for h in hits:
+                print(f"{h.path}: {h.line}")
+                total += 1
+        if total == 0:
+            print("No matches.")
         return 0
 
     raise AssertionError(f"unhandled cmd: {args.cmd}")

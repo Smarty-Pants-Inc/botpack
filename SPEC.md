@@ -1,4 +1,4 @@
-# Botpack Architecture Spec v0.2
+# Botpack Architecture Spec v0.3
 
 **Subtitle:** “Cargo for agent assets” (dependency + materialization toolchain)
 **Status:** Draft for implementation
@@ -16,8 +16,79 @@ Botpack is a repo-local toolchain that:
 
 This spec assumes Botpack replaces/absorbs the existing legacy CLI responsibilities.
 
-Default first‑party workspace directory is **`.botpack/workspace/`**.
-Botpack can also detect and migrate a legacy **`.smarty/`** workspace.
+Default first-party asset directory is **`botpack/`** (Git-tracked).
+Generated Botpack state lives in **`.botpack/`**.
+
+Botpack MAY support legacy workspaces (e.g. `.smarty/`, older `.botpack/workspace/`) via migration tooling,
+but v0.3 does not require backwards compatibility.
+
+## 0.1 North Star DX (Catch-On Mode)
+
+Botpack is built for people who bounce between:
+
+- multiple TUIs (Letta Code, Claude, Amp, Droid, etc.)
+- multiple repos
+
+The primary UX should be:
+
+- `botpack launch <tui>`
+
+Design requirements:
+
+- Users should not need to learn internal implementation nouns (store/cache/materialization) to succeed.
+- Conflicts/drift must be debuggable and fixable without blocking launches.
+
+## 0.2 DX Contract (Non-negotiables)
+
+These requirements exist to maximize adoption. They are treated as product constraints.
+
+### 0.2.1 Default commands
+
+- `botpack` (no args)
+  - prints a single-screen status for the active root
+  - prints the top recommended next actions
+  - never performs network operations by default
+
+- `botpack launch [<target>]`
+  - is the primary entry point
+  - resolves root by cwd (walk up to nearest `botpack.toml`)
+  - attempts install+sync
+  - if install/sync fails: warns loudly and launches using last-known-good materialization
+
+- `botpack status`
+  - is the universal health surface
+  - summarizes root selection, lock state, target materialization freshness, conflicts, trust gates
+  - for Letta: summarizes drift state (Git vs Letta)
+
+- `botpack doctor`
+  - fast, opinionated diagnostics
+  - ends with 1-3 concrete fix commands
+
+- `botpack explain <id>`
+  - deep dive for a specific issue id
+  - includes copy/paste override syntax
+
+### 0.2.2 Conflicts must not strand users
+
+- No conflict may prevent launching a TUI.
+- On conflict, Botpack preserves last-known-good target outputs.
+- Botpack provides actionable remediation via `doctor/explain`.
+
+### 0.2.3 Asset addresses are the primary UX primitive
+
+All diagnostics, conflicts, and selection mechanisms must reference stable asset addresses.
+
+Examples:
+
+- `skill:fetch_web`
+- `command:pr-review`
+- `agent:default`
+- `mcp:github`
+- `letta:block:project`
+
+Paths are secondary (for debugging), not the primary identifier.
+
+---
 
 ---
 
@@ -27,6 +98,7 @@ Botpack can also detect and migrate a legacy **`.smarty/`** workspace.
 
 * **Deterministic installs**: same manifest + lockfile → identical installed graph and identical on-disk outputs.
 * **Fast and opinionated UX**: `botpack add`, `botpack install`, `botpack sync` should be “do the obvious thing” with minimal configuration.
+* **Launch-first**: `botpack launch <tui>` is the default entrypoint; launch never blocks on sync conflicts.
 * **Repo-local, inspectable state**: manifests and generated artifacts are human-readable; no opaque hidden magic.
 * **Multi-runtime output**: one dependency graph → materialized layouts for multiple TUIs/runtimes.
 * **Progressive disclosure**: no startup-context bloating; skills/commands/agents remain discrete files, loaded when invoked.
@@ -45,25 +117,59 @@ Botpack can also detect and migrate a legacy **`.smarty/`** workspace.
 * Continue `.claude/skills/` as the **shared fallback** skills directory for Claude Code, Amp, and Factory Droid (current practical decision).
 * Prefer **native skills** where available; fall back to catalog/list/read only when needed.
 
+### 1.4 Product-direction constraints (v0.3)
+
+* Conflicts must not prevent launching a TUI; Botpack should preserve last-known-good target outputs.
+* Registry is supported on day 1, but must not be required (git/path deps remain first-class).
+
 ---
 
 ## 2) Terminology and core mental model
 
 ### 2.1 Glossary
 
-* **Workspace**: the repo-local canonical source of first-party assets (default `.botpack/workspace/`).
+* **Assets directory**: the repo-local canonical source of first-party assets (default `botpack/`).
 * **Package**: a versioned bundle of agent assets with a manifest (`agentpkg.toml`).
 * **Project manifest**: repo config declaring dependencies and targets (`botpack.toml`).
 * **Lockfile**: fully resolved dependency graph with integrity hashes (`botpack.lock`).
 * **Store**: global content-addressed cache of fetched packages.
 * **Virtual store**: project-local stable pointers to store entries (`.botpack/pkgs/...`).
 * **Target**: a runtime output profile (“claude”, “amp”, “droid”) describing how to materialize assets.
+* **Launch**: a convenience workflow that attempts install+sync and then starts a TUI, falling back to last-known-good outputs on sync failures.
 * **Materialization**: generating runtime-facing directories and aggregated files (symlinks/copies + generated MCP files).
-* **Catalog**: metadata-only index of all available assets in workspace + dependencies (`.botpack/catalog.json`).
+* **Catalog**: metadata-only index of all available assets in the assets directory + dependencies (`.botpack/catalog.json`).
 * **Capabilities**: declared risk-bearing behaviors (e.g., `exec`, MCP servers). Must be explicitly trusted before activation.
 * **Environment**: a Botpack root that owns a manifest+lock+state (project env or global profile env).
 * **Root**: the directory Botpack operates within (the parent of `botpack.toml` and `.botpack/`).
 * **Profile**: a named global environment under `~/.botpack/profiles/<profile>/`.
+
+### 2.1.2 Asset address
+
+An asset address is a stable identifier used in UX, diagnostics, overrides, and selection.
+
+Format (conceptual):
+
+- `<type>:<id>`
+- For Letta-managed resources: `letta:<type>:<id>`
+
+Examples:
+
+- `skill:fetch_web`
+- `agent:repo-curator`
+- `letta:block:conventions`
+
+Note: materialized file paths and package-qualified internal names remain implementation details.
+
+### 2.1.1 Agent definition vs agent instance
+
+To unify how different TUIs talk about "agents":
+
+* **Agent definition**: a versioned Botpack asset that describes a role/preset.
+* **Agent instance**: the runtime entity created/selected by a target.
+  * For Letta, this is a persistent Letta agent ID.
+  * For file-based TUIs, this may simply be a materialized config file.
+
+Botpack should treat agent definitions as a first-class asset type across targets.
 
 ### 2.2 Prime directive
 
@@ -99,64 +205,64 @@ Global environments are intended for “install once, enable everywhere” workf
 
 ### 3.2 Botpack repo directory
 
-Botpack uses a single repo-local directory:
+Botpack uses a single repo-local *state* directory:
 
 ```
-.botpack/
-  workspace/                # first-party assets (intended to be version controlled)
-    skills/<id>/SKILL.md
-    agents/*.md
-    commands/*.md
-    hooks/policy.yaml
+botpack/                    # first-party assets (Git-tracked)
+  skills/
+  commands/
+  agents/                   # agent definitions
+  mcp/
+  policy/
+  templates/
+  letta/                    # Letta assets (optional; see Letta section)
 
-  pkgs/                     # project virtual store (symlinks/junctions -> global store)
+.botpack/                   # generated state
+  pkgs/                     # project virtual store (links -> global store)
   generated/
     <target>/
-      mcp.json              # generated aggregate per target (example)
-      policy.generated.yaml # only if configured; off by default
+      ...                   # derived outputs (optional staging area)
   state/
     sync-<target>.json      # tracks what Botpack materialized (for clean/idempotence)
   catalog.json              # metadata-only catalog of all assets
   trust.toml                # explicit trust decisions (capabilities approvals)
-  targets/
-    *.toml                  # optional custom targets (future/mid-term)
 ```
 
-### 3.3 Workspace (first-party assets)
+### 3.3 First-party assets
 
-Botpack supports a configurable workspace directory. Default behavior:
+Botpack treats `botpack/` as the default assets directory. It is intended to be version controlled.
 
-* If `.botpack/workspace/` exists: use it.
-* Else, if `.smarty/` exists: treat it as a legacy workspace and prompt to migrate.
-* Else: `botpack init` creates `.botpack/workspace/`.
-
-Workspace layout:
+Minimal layout:
 
 ```
-.botpack/workspace/
-  skills/<id>/SKILL.md
-  agents/*.md
-  commands/*.md
-  hooks/policy.yaml
+botpack/
+  skills/
+  commands/
+  agents/
+  mcp/
 ```
 
 ---
 
 ## 4) Asset types and conventions
 
-Botpack recognizes assets botpack conventional paths in either:
+Botpack recognizes assets in either:
 
-* the repo workspace (`.botpack/workspace/...`), or
+* the repo assets directory (`botpack/...`), or
 * installed packages (inside `.botpack/pkgs/<pkg>/...`).
 
 ### 4.1 Asset types (v0.1)
 
 * **Skill**: `skills/<id>/SKILL.md` (+ optional `assets/`, `scripts/`)
 * **Command**: `commands/<id>.md` (slash command)
-* **Agent**: `agents/<id>.md`
+* **Agent definition**: `agents/<id>.md`
 * **MCP config**: `mcp/servers.toml` (canonical input); output target-specific
 * **Policy fragments**: `policy/*.yaml|yml|toml|json` (fragments only by default)
 * **Templates**: `templates/*` (packaged but not activated by default)
+
+Additional asset types (v0.3+):
+
+* **Letta assets**: `letta/**` (blocks/templates/policy/etc.)
 
 #### 4.1.1 Python skill scripts (UV + PEP 723)
 
@@ -173,7 +279,7 @@ For portable Python scripts inside a skill’s `scripts/` directory, Botpack sho
 ### 4.2 Canonical IDs and references
 
 * **Package name**: `@scope/name` or `name` (unscoped allowed but discouraged).
-* **Asset ID**: local to its package/workspace.
+* **Asset ID**: local to its package (or first-party assets directory).
 * **Fully qualified asset reference syntax (AssetRef)**:
 
   * `@scope/name:<assetId>` (type inferred botpack alias table or uniqueness)
@@ -190,8 +296,8 @@ Botpack uses **package-qualified output names** by default to avoid collisions.
 ```toml
 version = 1
 
-[workspace]
-dir = ".botpack/workspace"
+[assets]
+dir = "botpack" # default; can typically be omitted
 name = "@yourorg/yourrepo-assets" # optional
 private = true
 
@@ -223,11 +329,32 @@ skillsFallbackDir = "skills"
 root = ".factory"
 # v0.1: may only support skills via fallback to .claude/skills unless configured otherwise
 
+[targets.letta-code]
+root = ".letta"
+# Letta Code target is a materialization target (config files + local settings).
+
 [aliases.skills]
 fetch = "@acme/quality-skills:fetch_web"
 
 [aliases.commands]
 pr = "@acme/review-commands:pr-review"
+
+[entry]
+# Default launch selection per target.
+# Targets may ignore or partially support this depending on their capabilities.
+agent = "agent:default"
+
+# Optional: choose a default target when user runs `botpack launch` with no args.
+target = "claude"
+
+[overrides]
+# Override/conflict resolution by asset address.
+# Precise schema is TBD; user-facing intent is "choose winner / hide / rename".
+#
+# Examples (conceptual):
+# "letta:block:project" = { prefer = "@yourorg/yourrepo-assets" }
+# "mcp:github" = { hide = true }
+# "agent:default" = { rename = "agent:dev" }
 ```
 
 ### 5.2 Dependency spec formats (v0.1)
@@ -274,9 +401,18 @@ Root selection (which environment you are operating on) MUST be deterministic:
 
 Botpack's registry should be **lightweight**, **cache-friendly**, and **immutable by default**.
 
-#### Phase 1: git-only (no registry)
+Registry is supported on day 1, but must not be required.
+Git and local path dependencies are first-class.
 
-Packages are referenced directly by git URL (optionally a tag/commit via `rev`). This requires no central infrastructure.
+#### Phase 1: optional registry + git fallback
+
+Packages may be referenced:
+
+* via registry semver, or
+* directly by git URL (optionally a tag/commit via `rev`), or
+* via local path.
+
+A registry must never be required for correctness.
 
 #### Phase 2: static index ("registry")
 
@@ -531,7 +667,7 @@ Implement fetchers in this order:
 
 ### 10.1 Sync inputs
 
-* Workspace assets from `[workspace.dir]`
+* First-party assets from `[assets.dir]`
 * Installed dependency packages from `.botpack/pkgs/`
 * Target configuration from `botpack.toml`
 
@@ -590,13 +726,22 @@ Rules:
 * Aliases in `botpack.toml` can define short names.
 * Alias collisions are errors.
 
+### 10.4.1 Conflicts and last-known-good preservation
+
+If Botpack detects conflicts during sync:
+
+- Sync must fail atomically (no partial update).
+- Botpack must preserve last-known-good outputs.
+- `botpack launch` must continue using last-known-good outputs.
+- `botpack doctor` must surface the conflicts by asset address and provide fix guidance.
+
 ### 10.5 Sync state tracking
 
 `.botpack/state/sync-<target>.json` records:
 
 * botpack version
 * target config hash
-* list of materialized paths and their sources (workspace or pkg + asset)
+* list of materialized paths and their sources (assets dir or pkg + asset)
 * generated file checksums
 
 State tracking should also support drift detection:
@@ -611,7 +756,7 @@ State tracking should also support drift detection:
 * `--dry-run`: print plan (create/link/remove/generate) without writing
 * `--clean`: remove stale botpack-managed outputs
 * `--force`: overwrite conflicting unmanaged files only if explicitly requested
-* `--watch`: watch workspace + `.botpack/pkgs` changes; re-sync incrementally
+* `--watch`: watch assets dir + `.botpack/pkgs` changes; re-sync incrementally
 
 ---
 
@@ -619,7 +764,7 @@ State tracking should also support drift detection:
 
 ### 11.1 Purpose
 
-* Provide metadata-only discovery across workspace + dependencies.
+* Provide metadata-only discovery across assets dir + dependencies.
 * Avoid reading/embedding entire skill bodies into startup context.
 
 ### 11.2 Output
@@ -632,7 +777,7 @@ State tracking should also support drift detection:
 {
   "version": 1,
   "generatedAt": "2025-12-15T00:00:00Z",
-  "workspace": { "dir": ".botpack/workspace" },
+  "assets": { "dir": "botpack" },
   "packages": [
     {
       "name": "@acme/quality-skills",
@@ -793,8 +938,8 @@ Examples below use `botpack`.
 
 * `botpack init`
 
-  * Creates `botpack.toml` (and `.botpack/workspace/` if missing)
-  * Detects legacy `.smarty/` and existing `.claude/` and configures targets defaults
+  * Creates `botpack.toml` (and `botpack/` if missing)
+  * Detects existing `.claude/` and configures target defaults
 
 * `botpack add <spec>...`
 
@@ -825,6 +970,18 @@ Examples below use `botpack`.
 
   * Materializes for one or all targets
   * Supports `--dry-run`, `--clean`, `--force`, `--watch`
+
+* `botpack launch <target> [--agent <name>]`
+
+  * Attempts install+sync and then launches the requested TUI.
+  * If sync fails (conflicts, resolution errors), it MUST still launch using last-known-good materialization and emit warnings.
+  * Launch is cwd-based: Botpack discovers nearest `botpack.toml` by walking up parents.
+
+* `botpack status`
+
+  * Universal status surface for the current root.
+  * Must include: selected root, lock health, sync freshness per target, conflicts, trust gates.
+  * For Letta: drift summary.
 
 * `botpack prefetch`
 
@@ -857,6 +1014,19 @@ Examples below use `botpack`.
 
 * `botpack doctor` (checks collisions with unmanaged files, and toolchain prerequisites like `uv` when PEP 723 scripts are present)
 
+* `botpack explain <id>`
+
+  * Deep inspection for a specific conflict/drift item.
+  * Output should reference stable asset addresses (e.g. `agent:default`, `mcp:github`, `letta:block:project`).
+
+**Deploy targets (v0.3+)**
+
+* `botpack letta diff`
+* `botpack letta pull` (drift -> branch/commit for PR)
+* `botpack letta push` (apply desired state)
+* `botpack letta status`
+* `botpack letta bootstrap`
+
 **Migration**
 
 * `botpack migrate from-legacy`
@@ -881,11 +1051,11 @@ Examples below use `botpack`.
 
 ---
 
-## 15) Migration from legacy `.smarty/` repos
+## 15) Migration from legacy `.smarty/` repos (optional)
 
-### 15.1 Backward compatibility strategy
+### 15.1 Backward compatibility strategy (optional)
 
-* Botpack treats `.botpack/workspace/` as the default workspace root.
+* Botpack treats `botpack/` as the default assets root.
 * Legacy `.smarty/` is supported via `botpack migrate from-legacy`.
 * Botpack does not require converting SKILL.md; it remains canonical.
 * Existing `.claude/skills` fallback remains; Botpack becomes the deterministic “sync owner.”
@@ -896,7 +1066,7 @@ Examples below use `botpack`.
 
 1. Create `botpack.toml` if missing with:
 
-   * `[workspace] dir = ".botpack/workspace"`
+   * `[assets] dir = "botpack"`
    * targets configured (claude/amp/droid)
 2. Create `.botpack/` directory
 3. Generate initial `.botpack/catalog.json`
@@ -955,7 +1125,7 @@ This section is written so an orchestrator can parallelize implementation.
 
 6. **assets**
 
-   * Scan workspace/package directories for assets
+   * Scan assets directory + package directories for assets
    * Parse frontmatter metadata
    * Construct canonical asset objects
 
@@ -1000,15 +1170,82 @@ This section is written so an orchestrator can parallelize implementation.
 
 ---
 
-## 17) Test plan and acceptance criteria
+## 17) Letta integration (v1)
 
-### 17.1 Golden-repo integration tests (must-have)
+This section defines first-class Letta support as part of Botpack.
+
+High-level approach:
+
+- Treat Letta Code as a *primary materialization target* (`target=letta-code`) that writes `.letta/`.
+- Treat Letta itself as a *deploy-capable target* for managed resources (blocks/templates/tools/MCP/folders).
+
+### 17.1 Managed vs observed
+
+Botpack manages (Git-governed, PR-reviewed):
+
+- memory blocks (shared repo/org/company docs)
+- templates / agent definitions (format TBD)
+- tools (optional v1)
+- MCP servers
+- Letta filesystem folders/sources
+
+Botpack never manages:
+
+- message history
+- runs/steps
+- telemetry
+
+### 17.2 PR-only governance + drift capture
+
+All shared Letta changes must land as Git PRs.
+
+- ADE edits are allowed, but must be captured via `botpack letta pull` which produces a branch/commit for PR.
+
+Safety defaults:
+
+- `botpack letta push` refuses to overwrite if drift exists.
+- `botpack launch letta-code` never blocks on conflicts and uses last-known-good output.
+
+### 17.3 Canonical Letta assets
+
+Letta assets live under `botpack/letta/`.
+
+Recommended conventions:
+
+- Use `botpack/letta/blocks/repo/` for repo-level blocks (avoid `project/project.md`).
+- Blocks are addressed by label; path mapping must be deterministic.
+
+Example mapping:
+
+- block label `project` => `botpack/letta/blocks/repo/project.md`
+- block label `conventions` => `botpack/letta/blocks/repo/conventions.md`
+- block label `org_agent_playbook` => `botpack/letta/blocks/org/org_agent_playbook.md`
+- block label `scope_<name>_project` => `botpack/letta/blocks/scopes/<name>/project.md`
+
+### 17.4 Letta Code materialization rules
+
+`.letta/` is a target output directory.
+
+- Botpack may write `.letta/settings.json` and other managed configuration.
+- Botpack MUST preserve `.letta/settings.local.json` (local binding/caches).
+
+### 17.5 Letta CLI surface (proposed)
+
+- `botpack letta status`
+- `botpack letta diff`
+- `botpack letta pull` (drift -> branch/commit)
+- `botpack letta push` (apply desired state)
+- `botpack letta bootstrap` (create/bind agent instance + optional launch)
+
+## 18) Test plan and acceptance criteria
+
+### 18.1 Golden-repo integration tests (must-have)
 
 Create fixture repos with:
 
-* Workspace-only assets (`.botpack/workspace/...`)
+* First-party assets (`botpack/...`)
 * Dependencies-only assets
-* Mixed workspace + dependencies
+* Mixed first-party + dependencies
 * MCP packages requiring trust
 
 For each, verify:
@@ -1019,18 +1256,18 @@ For each, verify:
 * collisions produce expected exit code and message
 * trust gating blocks MCP exec servers until approved
 
-### 17.2 Cross-platform tests (must-have)
+### 18.2 Cross-platform tests (must-have)
 
 * Linux + macOS + Windows
 * Symlink/hardlink/copy modes (at least one test each)
 
-### 17.3 Runtime smoke tests (must-have)
+### 18.3 Runtime smoke tests (must-have)
 
 * Verify materialized `.claude/skills` matches expected structure for Claude Code ingestion
 * Verify `.agents/commands` exists and includes commands for Amp
 * Verify fallback `.claude/skills` is sufficient for Amp and Droid workflows (as per current practice)
 
-### 17.4 Agentic rubric-based end-to-end tests (must-have)
+### 18.4 Agentic rubric-based end-to-end tests (must-have)
 
 Botpack should ship an agentic test harness that validates real workflows botpack instructing **multiple parallel agents** to perform end-to-end scenarios and then grading results against a **rubric**.
 
@@ -1057,7 +1294,7 @@ Minimum required scenarios:
 
 ---
 
-## 18) Work breakdown for parallel developer agents
+## 19) Work breakdown for parallel developer agents
 
 ### Stream A — CLI + command wiring
 
@@ -1117,11 +1354,11 @@ Minimum required scenarios:
 
 **Done when:** untrusted exec MCP never materializes; trusted does.
 
-### Stream H — Migration tooling + compatibility
+### Stream H — Migration tooling + compatibility (optional)
 
 * `botpack migrate from-legacy`
 * Optional legacy CLI shim or compatibility notes
-* Detect and migrate `.smarty/` into `.botpack/workspace/`
+* Detect and migrate `.smarty/` (and older `.botpack/workspace/`) into `botpack/`
 
 **Done when:** existing repo can adopt botpack without breaking `.claude/skills` workflows.
 
@@ -1135,7 +1372,7 @@ Minimum required scenarios:
 
 ---
 
-## 19) MVP deliverable definition (v0.1)
+## 20) MVP deliverable definition (v0.1)
 
 ### MVP includes
 
@@ -1146,18 +1383,19 @@ Minimum required scenarios:
 * Sync targets: `claude`, `amp`, `droid` (with `.claude/skills` fallback)
 * Catalog generation
 * MCP merge + trust gating (exec servers blocked until trusted)
-* Migration from `.smarty/` repos
+* Optional migration from `.smarty/` repos
+* Optional static registry support (Phase 2 model), but registry is not required
 
 ### MVP explicitly excludes
 
-* Public registry/search UI
+* Hosted registry/search UI (a static index is sufficient for v0.1)
 * Signing/verification (can be designed later)
 * Template application into CLAUDE.md/AGENTS.md
 * Policy file generation beyond fragment staging
 
 ---
 
-## 20) Implementation notes for transitioning from older repos
+## 21) Implementation notes for transitioning from older repos
 
 ### Recommended evolution path
 
@@ -1208,7 +1446,7 @@ These are implementation choices Botpack should hardcode initially, with later c
 
 * Integrity hash: **BLAKE3** recommended (fast), fallback SHA-256 if needed.
 * Default output naming: **package-qualified** to avoid collisions.
-* Default workspace dir: `.botpack/workspace/` if present; if `.smarty/` exists treat as legacy and prompt to migrate; otherwise create `.botpack/workspace/`.
+* Default assets dir: `botpack/`. If `.smarty/` or older `.botpack/workspace/` exists, treat as legacy and prompt to migrate.
 * Default link mode: `auto`.
 
 ---

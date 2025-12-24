@@ -9,6 +9,7 @@ from .assets import AssetIndex, scan_assets
 from .config import BotyardConfig, parse_botyard_toml_file
 from .lock import load_lock
 from .paths import botyard_dir, store_dir, work_root
+from .pkgs import materialize_pkgs
 from .trust import WORKSPACE_TRUST_KEY, check_mcp_server_trust
 
 
@@ -173,6 +174,14 @@ def _sync_target(
     removed: list[str] = []
     conflicts: list[str] = []
     blocked: list[str] = []
+
+    # Materialize stable, project-local package roots for shared assets.
+    if lock is not None:
+        pr = materialize_pkgs(lock=lock, mode=cfg.sync.link_mode, dry_run=dry_run, clean=clean, force=force)
+        created.extend(pr.created)
+        updated.extend(pr.updated)
+        removed.extend(pr.removed)
+        conflicts.extend(pr.conflicts)
 
     def sync_skill(*, prefix: str, src_skill_md: Path, sid: str) -> None:
         out_name = f"{prefix}.{sid}"

@@ -5,6 +5,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+import errno
 
 from .paths import store_dir
 
@@ -66,13 +67,90 @@ def store_put_tree(src: Path) -> StoredTree:
     return StoredTree(digest=digest, path=dst)
 
 
-def store_materialize(tree: StoredTree, dest: Path, *, mode: str = "copy") -> None:
-    if mode not in {"copy", "symlink"}:
+def store_materialize(tree: StoredTree, dest: Path, *, mode: str = "copy") -> str:
+    """Materialize a stored tree to `dest`.
+
+    Modes:
+    - copy: full copy
+    - symlink: directory symlink
+    - hardlink: hardlink files (best-effort; preserves symlinks)
+    - auto: try symlink -> hardlink -> copy
+
+    Returns the mode actually used.
+    """
+
+    if mode not in {"auto", "copy", "symlink", "hardlink"}:
         raise ValueError(f"unsupported mode: {mode}")
-    if dest.exists():
-        shutil.rmtree(dest)
+
+    attempts = [mode] if mode != "auto" else ["symlink", "hardlink", "copy"]
+    last: Exception | None = None
+    for m in attempts:
+        try:
+            _materialize_tree(src=tree.path, dest=dest, mode=m)
+            return m
+        except Exception as e:  # pragma: no cover (depends on fs/policy)
+            last = e
+            continue
+    assert last is not None
+    raise last
+
+
+def _rm_any(path: Path) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+        return
+    if path.is_dir():
+        shutil.rmtree(path)
+
+
+def _hardlink_tree(src: Path, dst: Path) -> None:
+    dst.mkdir(parents=True, exist_ok=True)
+    for p in sorted(src.rglob("*")):
+        rel = p.relative_to(src)
+        out = dst / rel
+        if p.is_dir():
+            out.mkdir(parents=True, exist_ok=True)
+            continue
+        if p.is_symlink():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(os.readlink(p), out)
+            continue
+        if p.is_file():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            os.link(p, out)
+            continue
+
+
+def _materialize_tree(*, src: Path, dest: Path, mode: str) -> None:
+    if mode not in {"copy", "symlink", "hardlink"}:
+        raise ValueError(f"unsupported mode: {mode}")
+
+    dest = dest.resolve() if dest.exists() else dest
     dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    _rm_any(tmp)
+
+    if mode == "symlink":
+        tmp.symlink_to(src, target_is_directory=True)
+        _rm_any(dest)
+        tmp.replace(dest)
+        return
+
     if mode == "copy":
-        shutil.copytree(tree.path, dest, symlinks=True)
-    else:
-        dest.symlink_to(tree.path, target_is_directory=True)
+        shutil.copytree(src, tmp, symlinks=True)
+        _rm_any(dest)
+        tmp.replace(dest)
+        return
+
+    # hardlink
+    try:
+        _hardlink_tree(src, tmp)
+    except OSError as e:
+        # Surface the failure to allow auto fallback.
+        if getattr(e, "errno", None) in {errno.EXDEV, errno.EPERM, errno.EACCES}:
+            _rm_any(tmp)
+        raise
+    _rm_any(dest)
+    tmp.replace(dest)

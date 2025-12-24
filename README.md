@@ -7,6 +7,10 @@ Botpack intentionally separates:
 * **Installed**: present in the global store + referenced by a lockfile
 * **Materialized**: projected into a runtime directory (Claude/Amp/Droid) via `botpack sync`
 
+## Development Status
+
+**→ See [BOTPACK_WORKLANE_STATUS.md](./BOTPACK_WORKLANE_STATUS.md) for current testing status and next steps for resuming work on the interactive TUI matrix tests.**
+
 ## Install (uv)
 
 Botpack is currently published from GitHub (PyPI release pending). With `uv`:

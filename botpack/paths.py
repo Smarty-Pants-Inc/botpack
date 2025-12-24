@@ -34,3 +34,9 @@ def store_dir() -> Path:
     new = home / ".botpack" / "store" / "v1"
     old = home / ".botyard" / "store" / "v1"
     return new if new.exists() or not old.exists() else old
+
+
+def pkgs_dir() -> Path:
+    """Project-local materialized package roots (.botpack/pkgs)."""
+
+    return botyard_dir() / "pkgs"
