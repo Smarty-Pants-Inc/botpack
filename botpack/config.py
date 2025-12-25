@@ -24,6 +24,7 @@ from .models import (
     TrustEntry,
     UrlDependency,
     WorkspaceConfig,
+    EntryConfig,
 )
 
 
@@ -138,7 +139,18 @@ def parse_botyard_toml_file(path: Path | None = None) -> BotyardConfig:
 
 
 def _parse_botyard(path: Path, data: dict[str, Any]) -> BotyardConfig:
-    allowed_top = {"version", "workspace", "dependencies", "sync", "targets", "aliases"}
+    # Accept both "assets" (v0.3+) and "workspace" (legacy) for reading.
+    allowed_top = {
+        "version",
+        "assets",
+        "workspace",  # legacy alias
+        "dependencies",
+        "sync",
+        "targets",
+        "aliases",
+        "entry",
+        "overrides",
+    }
     unknown_top = set(data.keys()) - allowed_top
     if unknown_top:
         raise ConfigValidationError(path=path, message=_unknown_keys_message(unknown_top))
@@ -147,19 +159,43 @@ def _parse_botyard(path: Path, data: dict[str, Any]) -> BotyardConfig:
     if version != 1:
         raise ConfigValidationError(path=path, message=f"version: expected 1, got {version}")
 
+    # Accept both [assets] and [workspace], prefer [assets] if both present (error).
+    assets_raw = data.get("assets")
+    ws_raw = data.get("workspace")
+    if assets_raw is not None and ws_raw is not None:
+        raise ConfigValidationError(path=path, message="cannot have both [assets] and [workspace]; use [assets]")
+
     workspace = WorkspaceConfig()
-    ws_tbl = _optional_table(path, data.get("workspace"), "workspace")
-    if ws_tbl is not None:
-        allowed_ws = {"dir", "name", "private"}
-        unknown_ws = set(ws_tbl.keys()) - allowed_ws
-        if unknown_ws:
-            raise ConfigValidationError(path=path, message=f"workspace: {_unknown_keys_message(unknown_ws)}")
-        if "dir" in ws_tbl:
-            workspace = replace(workspace, dir=_require_str(path, ws_tbl.get("dir"), "workspace.dir"))
-        if "name" in ws_tbl:
-            workspace = replace(workspace, name=_optional_str(path, ws_tbl.get("name"), "workspace.name"))
-        if "private" in ws_tbl:
-            workspace = replace(workspace, private=_require_bool(path, ws_tbl.get("private"), "workspace.private"))
+    # Prefer assets_raw, fall back to ws_raw for backward compat
+    combined_tbl = _optional_table(path, assets_raw if assets_raw is not None else ws_raw, "assets")
+    if combined_tbl is not None:
+        allowed_assets = {"dir", "name", "private"}
+        unknown_assets = set(combined_tbl.keys()) - allowed_assets
+        if unknown_assets:
+            raise ConfigValidationError(path=path, message=f"assets: {_unknown_keys_message(unknown_assets)}")
+        if "dir" in combined_tbl:
+            workspace = replace(workspace, dir=_require_str(path, combined_tbl.get("dir"), "assets.dir"))
+        if "name" in combined_tbl:
+            workspace = replace(workspace, name=_optional_str(path, combined_tbl.get("name"), "assets.name"))
+        if "private" in combined_tbl:
+            workspace = replace(workspace, private=_require_bool(path, combined_tbl.get("private"), "assets.private"))
+
+    # Optional: entry defaults used by `botpack launch`
+    entry = EntryConfig()
+    entry_tbl = _optional_table(path, data.get("entry"), "entry")
+    if entry_tbl is not None:
+        allowed_entry = {"agent", "target"}
+        unknown_entry = set(entry_tbl.keys()) - allowed_entry
+        if unknown_entry:
+            raise ConfigValidationError(path=path, message=f"entry: {_unknown_keys_message(unknown_entry)}")
+        if "agent" in entry_tbl:
+            entry = replace(entry, agent=_optional_str(path, entry_tbl.get("agent"), "entry.agent"))
+        if "target" in entry_tbl:
+            entry = replace(entry, target=_optional_str(path, entry_tbl.get("target"), "entry.target"))
+
+    # Optional: explicit override rules (schema is intentionally loose in v0.3).
+    overrides_tbl = _optional_table(path, data.get("overrides"), "overrides")
+    overrides: dict[str, Any] = overrides_tbl or {}
 
     deps_tbl = data.get("dependencies")
     dependencies: dict[str, Any] = {}
@@ -222,6 +258,8 @@ def _parse_botyard(path: Path, data: dict[str, Any]) -> BotyardConfig:
         sync=sync,
         targets=targets,
         aliases=aliases,
+        entry=entry,
+        overrides=overrides,
     )
 
 

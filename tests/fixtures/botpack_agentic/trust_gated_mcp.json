@@ -47,7 +47,7 @@
     {
       "kind": "file_contains",
       "path": ".claude/mcp.json",
-      "substr": "workspace/postgres"
+      "substr": "assets/postgres"
     }
   ]
 }

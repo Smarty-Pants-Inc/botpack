@@ -16,7 +16,8 @@ def test_botyard_toml_minimal_parses(tmp_path: Path) -> None:
     cfg = parse_botyard_toml_file(p)
 
     assert cfg.version == 1
-    assert cfg.workspace.dir == ".botpack/workspace"
+    # v0.3: Default assets dir changed from ".botpack/workspace" to "botpack"
+    assert cfg.workspace.dir == "botpack"
     assert cfg.dependencies == {}
 
 

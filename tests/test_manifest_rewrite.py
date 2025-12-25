@@ -24,10 +24,11 @@ a = { path = "a" }
     )
 
     assert main(["add", "c", "--path", "c"]) == 0
+    # Note: [workspace] in input is converted to [assets] on write (v0.3 schema migration)
     expected_after_add = (
         "version = 1\n"
         "\n"
-        "[workspace]\n"
+        "[assets]\n"
         "dir = \".botpack/workspace\"\n"
         "\n"
         "[dependencies]\n"
@@ -42,7 +43,7 @@ a = { path = "a" }
     expected_after_remove = (
         "version = 1\n"
         "\n"
-        "[workspace]\n"
+        "[assets]\n"
         "dir = \".botpack/workspace\"\n"
         "\n"
         "[dependencies]\n"

@@ -10,8 +10,9 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as _tomllib  # type: ignore
 
 
-_ALLOWED_TOP = {"version", "workspace", "dependencies", "sync", "targets", "aliases"}
-_ALLOWED_WS = {"dir", "name", "private"}
+# Note: "assets" is the v0.3+ key; "workspace" is accepted for backward compat (read only).
+_ALLOWED_TOP = {"version", "assets", "workspace", "dependencies", "sync", "targets", "aliases"}
+_ALLOWED_ASSETS = {"dir", "name", "private"}
 _ALLOWED_SYNC = {"onAdd", "onInstall", "catalog", "linkMode"}
 _ALLOWED_TARGET = {
     "root",
@@ -70,13 +71,19 @@ def _validate_manifest(raw: dict[str, Any]) -> None:
     if raw.get("version") != 1:
         raise ValueError(f"botpack.toml: version must be 1 (got {raw.get('version')!r})")
 
-    ws = raw.get("workspace")
-    if ws is not None:
-        if not isinstance(ws, dict):
-            raise ValueError("botpack.toml: workspace must be a table")
-        unk_ws = set(ws.keys()) - _ALLOWED_WS
-        if unk_ws:
-            raise ValueError(f"botpack.toml: workspace: unknown keys: {', '.join(sorted(unk_ws))}")
+    # Accept both [assets] (v0.3+) and [workspace] (legacy) for reading.
+    # If both are present, prefer [assets].
+    assets_tbl = raw.get("assets")
+    ws_tbl = raw.get("workspace")
+    if assets_tbl is not None and ws_tbl is not None:
+        raise ValueError("botpack.toml: cannot have both [assets] and [workspace]; use [assets]")
+    active_assets = assets_tbl if assets_tbl is not None else ws_tbl
+    if active_assets is not None:
+        if not isinstance(active_assets, dict):
+            raise ValueError("botpack.toml: assets must be a table")
+        unk_assets = set(active_assets.keys()) - _ALLOWED_ASSETS
+        if unk_assets:
+            raise ValueError(f"botpack.toml: assets: unknown keys: {', '.join(sorted(unk_assets))}")
 
     deps = raw.get("dependencies")
     if deps is not None:
@@ -157,13 +164,14 @@ def render_manifest(raw: dict[str, Any]) -> str:
 
     lines.append(f"version = {int(raw['version'])}")
 
-    ws = raw.get("workspace")
-    if isinstance(ws, dict):
+    # Support reading from either "assets" (v0.3+) or "workspace" (legacy), but always write "assets".
+    assets = raw.get("assets") or raw.get("workspace")
+    if isinstance(assets, dict):
         lines.append("")
-        lines.append("[workspace]")
+        lines.append("[assets]")
         for k in ("dir", "name", "private"):
-            if k in ws:
-                lines.append(f"{k} = {_fmt_value(ws[k])}")
+            if k in assets:
+                lines.append(f"{k} = {_fmt_value(assets[k])}")
 
     deps = raw.get("dependencies")
     if isinstance(deps, dict) and deps:

@@ -54,7 +54,7 @@ args = ["-y", "@modelcontextprotocol/server-postgres"]
 
     mcp_out = tmp_path / ".claude" / "mcp.json"
     payload = json.loads(mcp_out.read_text(encoding="utf-8"))
-    assert payload["servers"][0]["name"] == "workspace/postgres"
+    assert payload["servers"][0]["name"] == "assets/postgres"
     assert payload["servers"][0]["transport"] == "stdio"
 
 
@@ -117,7 +117,7 @@ env = { FOO = "bar", BAZ = "qux" }
         '        "BAZ": "qux",\n'
         '        "FOO": "bar"\n'
         "      },\n"
-        '      "name": "workspace/alpha",\n'
+        '      "name": "assets/alpha",\n'
         '      "notes": "Alpha",\n'
         '      "transport": "http",\n'
         '      "url": "http://example.test"\n'
@@ -128,7 +128,7 @@ env = { FOO = "bar", BAZ = "qux" }
         '        "zeta"\n'
         "      ],\n"
         '      "command": "npx",\n'
-        '      "name": "workspace/zeta",\n'
+        '      "name": "assets/zeta",\n'
         '      "notes": "Zeta",\n'
         '      "transport": "stdio"\n'
         "    }\n"

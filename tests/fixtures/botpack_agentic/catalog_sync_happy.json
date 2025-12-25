@@ -30,8 +30,8 @@
   ],
   "checks": [
     {"kind": "file_exists", "path": ".botpack/catalog.json"},
-    {"kind": "file_exists", "path": ".claude/skills/workspace.hello/SKILL.md"},
-    {"kind": "file_exists", "path": ".claude/commands/workspace.hi.md"},
+    {"kind": "file_exists", "path": ".claude/skills/assets.hello/SKILL.md"},
+    {"kind": "file_exists", "path": ".claude/commands/assets.hi.md"},
     {"kind": "file_contains", "path": ".botpack/catalog.json", "substr": "workspaceAssets"},
     {
       "kind": "json_schema",

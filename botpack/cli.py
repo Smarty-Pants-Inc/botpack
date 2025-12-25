@@ -95,13 +95,76 @@ def _apply_root_selection(args: argparse.Namespace) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="botpack")
+    p = argparse.ArgumentParser(
+        prog="botpack",
+        description="Cargo for agent assets - dependency + materialization toolchain",
+    )
     root_group = p.add_mutually_exclusive_group(required=False)
-    root_group.add_argument("--root", type=Path, default=None)
-    root_group.add_argument("--global", dest="global_mode", action="store_true")
-    p.add_argument("--profile", type=str, default=None)
+    root_group.add_argument("--root", type=Path, default=None, help="Explicit project root")
+    root_group.add_argument("--global", dest="global_mode", action="store_true", help="Use global environment")
+    p.add_argument("--profile", type=str, default=None, help="Global profile name")
 
-    sub = p.add_subparsers(dest="cmd", required=True)
+    # cmd is NOT required - no args prints brief status
+    sub = p.add_subparsers(dest="cmd", required=False)
+
+    # -------------------------------------------------------------------------
+    # DX-contract commands (v0.3)
+    # -------------------------------------------------------------------------
+
+    # botpack status - universal health surface
+    st = sub.add_parser("status", help="Universal status surface (root, lock, targets, conflicts, trust)")
+    st.add_argument("--manifest", type=Path, default=None)
+    st.add_argument("--json", dest="json_output", action="store_true", help="Output as JSON")
+
+    # botpack launch - primary entry point
+    launch = sub.add_parser(
+        "launch",
+        help="Launch a TUI (attempts install+sync, falls back to last-known-good)",
+    )
+    launch.add_argument("target", nargs="?", default=None, help="Target to launch (claude, amp, droid, letta-code)")
+    launch.add_argument("--agent", type=str, default=None, help="Agent name/preset to use")
+    launch.add_argument("--manifest", type=Path, default=None)
+    launch.add_argument("--dry-run", action="store_true", help="Prepare but don't actually launch")
+    launch.add_argument("--env-file", type=Path, default=None, help="Source this file before launch")
+    launch.add_argument("--env-cmd", type=str, default=None, help="Bash snippet to run before launch")
+    launch.add_argument("--model", type=str, default=None, help="Model override for TUI")
+    launch.add_argument("--droid-args", type=str, default=None, help="Extra args for droid")
+    launch.add_argument("--no-sync", action="store_true", help="Skip install+sync, launch immediately")
+    launch.add_argument("--repo-root", type=Path, default=None, help="Repository root for TUI")
+
+    # botpack explain - deep dive for specific issues
+    explain = sub.add_parser("explain", help="Deep dive explanation for a specific issue ID")
+    explain.add_argument("issue_id", help="Issue ID from status output (e.g., conflict:abc123, trust:def456)")
+    explain.add_argument("--manifest", type=Path, default=None)
+
+    # Letta integration
+    letta = sub.add_parser("letta", help="Letta integration (drift-aware, PR-first)")
+    letta_sub = letta.add_subparsers(dest="letta_cmd", required=True)
+
+    letta_status = letta_sub.add_parser("status", help="Show Letta drift status")
+    letta_status.add_argument("--json", dest="json_output", action="store_true")
+
+    letta_diff = letta_sub.add_parser("diff", help="Show detailed Letta diff")
+    letta_diff.add_argument("--json", dest="json_output", action="store_true")
+
+    letta_pull = letta_sub.add_parser("pull", help="Capture Letta drift to a Git branch/commit")
+    letta_pull.add_argument("--dry-run", action="store_true")
+    letta_pull.add_argument("--branch", type=str, default=None)
+    letta_pull.add_argument("--json", dest="json_output", action="store_true")
+
+    letta_push = letta_sub.add_parser("push", help="Deploy Git-managed Letta state to Letta")
+    letta_push.add_argument("--dry-run", action="store_true")
+    letta_push.add_argument("--force", action="store_true")
+    letta_push.add_argument("--json", dest="json_output", action="store_true")
+
+    letta_bootstrap = letta_sub.add_parser("bootstrap", help="Create/bind a Letta agent instance")
+    letta_bootstrap.add_argument("--name", type=str, default=None)
+    letta_bootstrap.add_argument("--template", type=str, default=None)
+    letta_bootstrap.add_argument("--json", dest="json_output", action="store_true")
+
+    # -------------------------------------------------------------------------
+    # Existing commands
+    # -------------------------------------------------------------------------
 
     mig = sub.add_parser("migrate", help="Migrate legacy workspace layouts")
     mig_sub = mig.add_subparsers(dest="migrate_cmd", required=True)
@@ -334,6 +397,191 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
+    # Handle no-args case: print brief status summary
+    if args.cmd is None:
+        from .cli_status import collect_status, format_brief_status
+
+        info = collect_status()
+        print(format_brief_status(info), end="")
+        return 0
+
+    # -------------------------------------------------------------------------
+    # DX-contract commands (v0.3)
+    # -------------------------------------------------------------------------
+
+    if args.cmd == "status":
+        from .cli_status import collect_status, format_brief_status, format_full_status
+
+        info = collect_status(manifest_path=args.manifest)
+        if getattr(args, "json_output", False):
+            import json as json_mod
+            # Convert to JSON-serializable format
+            out = {
+                "root": str(info.root),
+                "manifest": str(info.manifest_path) if info.manifest_path else None,
+                "manifest_exists": info.manifest_exists,
+                "lock": str(info.lock_path) if info.lock_path else None,
+                "lock_exists": info.lock_exists,
+                "lock_version": info.lock_version,
+                "packages_count": info.packages_count,
+                "targets": {
+                    name: {
+                        "exists": ts.exists,
+                        "paths_count": ts.paths_count,
+                        "conflicts": ts.conflicts,
+                    }
+                    for name, ts in info.targets.items()
+                },
+                "conflicts": info.all_conflicts,
+                "trust_gates": [
+                    {"pkg_key": g.pkg_key, "needs_exec": g.needs_exec, "needs_mcp": g.needs_mcp, "issue_id": g.issue_id}
+                    for g in info.trust_gates
+                ],
+                "letta_drift": info.letta_drift,
+                "warnings": info.warnings,
+                "errors": info.errors,
+                "has_issues": info.has_issues,
+            }
+            print(json_mod.dumps(out, indent=2, sort_keys=True))
+        else:
+            print(format_full_status(info), end="")
+        return 0
+
+    if args.cmd == "launch":
+        from .cli_status import prepare_launch, format_launch_warnings
+        from .tui.tmux import TmuxSession
+
+        # Determine target
+        target = args.target
+        if target is None:
+            # Try to get default from manifest
+            try:
+                from .config import parse_botyard_toml_file
+
+                cfg = parse_botyard_toml_file(args.manifest)
+                target = cfg.entry.target or "claude"
+                if args.agent is None and cfg.entry.agent:
+                    args.agent = cfg.entry.agent
+            except Exception:
+                target = "claude"
+
+        # Map target names to TUI names
+        target_to_tui = {
+            "claude": "claude",
+            "amp": "amp",
+            "droid": "droid",
+            "letta-code": "coder",  # Letta Code uses coder TUI for now
+            "opencode": "opencode",
+            "codex": "codex",
+            "coder": "coder",
+        }
+        tui_name = target_to_tui.get(target, target)
+
+        # Prepare launch (install + sync)
+        if not getattr(args, "no_sync", False):
+            result = prepare_launch(target=target, manifest_path=args.manifest)
+            if result.warnings:
+                print(format_launch_warnings(result), end="")
+
+        if getattr(args, "dry_run", False):
+            print(f"Would launch target: {target} (tui: {tui_name})")
+            if args.agent:
+                print(f"Agent: {args.agent}")
+            return 0
+
+        # Actually launch the TUI
+        repo_root = Path(args.repo_root).resolve() if args.repo_root else Path.cwd().resolve()
+        sess = TmuxSession.ensure(
+            tui=tui_name,
+            repo_root=repo_root,
+            reuse_latest=False,
+        )
+        sess.start(
+            env_file=args.env_file,
+            env_cmd=args.env_cmd,
+            model=args.model,
+            agent=args.agent,
+            droid_args=args.droid_args,
+        )
+        print(f"Launched {target} in tmux session: {sess.sess}")
+        print(f"Artifacts: {sess.art_dir}")
+        print(f"\nTo attach: tmux -L {sess.sock} attach -t {sess.sess}")
+        return 0
+
+    if args.cmd == "explain":
+        from .cli_status import explain_issue
+
+        output = explain_issue(str(args.issue_id), manifest_path=args.manifest)
+        print(output, end="")
+        return 0
+
+    if args.cmd == "letta":
+        from dataclasses import asdict
+
+        from .letta.client import create_letta_client
+        from .letta.workflows import (
+            letta_bootstrap,
+            letta_diff,
+            letta_pull,
+            letta_push,
+            letta_status,
+        )
+
+        client = create_letta_client()
+
+        if args.letta_cmd == "status":
+            res = letta_status(client=client)
+            if getattr(args, "json_output", False):
+                print(json.dumps(asdict(res), indent=2, sort_keys=True))
+            else:
+                print(f"Letta URL: {res.letta_url}")
+                print(f"Reachable: {res.letta_reachable}")
+                print(f"Managed blocks: {res.managed_blocks}")
+                print(f"Has drift: {res.has_drift}")
+                for a in res.recommended_actions:
+                    print(f"- {a}")
+            return 0
+
+        if args.letta_cmd == "diff":
+            res = letta_diff(client=client)
+            if getattr(args, "json_output", False):
+                print(json.dumps(asdict(res), indent=2, sort_keys=True))
+            else:
+                print(res.message)
+                if res.diff is not None:
+                    for item in res.diff.items:
+                        print(f"- {item.address} ({item.direction})")
+            return 0
+
+        if args.letta_cmd == "pull":
+            res = letta_pull(client=client, branch_name=args.branch, dry_run=bool(args.dry_run))
+            if getattr(args, "json_output", False):
+                print(json.dumps(asdict(res), indent=2, sort_keys=True))
+            else:
+                print(res.message)
+            return 0 if res.ok else 1
+
+        if args.letta_cmd == "push":
+            res = letta_push(client=client, force=bool(args.force), dry_run=bool(args.dry_run))
+            if getattr(args, "json_output", False):
+                print(json.dumps(asdict(res), indent=2, sort_keys=True))
+            else:
+                print(res.message)
+            return 0 if res.ok else 1
+
+        if args.letta_cmd == "bootstrap":
+            res = letta_bootstrap(client=client, agent_name=args.name, template_id=args.template)
+            if getattr(args, "json_output", False):
+                print(json.dumps(asdict(res), indent=2, sort_keys=True))
+            else:
+                print(res.message)
+            return 0 if res.ok else 1
+
+        raise AssertionError(f"unhandled letta cmd: {args.letta_cmd}")
+
+    # -------------------------------------------------------------------------
+    # Existing commands
+    # -------------------------------------------------------------------------
 
     if args.cmd == "agentic":
         if args.agentic_cmd != "run":

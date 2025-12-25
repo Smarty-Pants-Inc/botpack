@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass(frozen=True)
 class WorkspaceConfig:
-    dir: str = ".botpack/workspace"
+    """Config for the [assets] section (legacy: [workspace]).
+
+    v0.3 changed the default assets directory from `.botpack/workspace` to `botpack/`.
+    The internal type name is kept as WorkspaceConfig for now to avoid a large rename;
+    the TOML key is `[assets]` (with `[workspace]` as a backward-compat alias).
+    """
+
+    dir: str = "botpack"
     name: str | None = None
     private: bool = True
+
+
+# Type alias for clarity - the manifest section is now called [assets]
+AssetsConfig = WorkspaceConfig
 
 
 @dataclass(frozen=True)
@@ -62,6 +74,17 @@ class AliasesConfig:
 
 
 @dataclass(frozen=True)
+class EntryConfig:
+    """Default launch selection.
+
+    This matches SPEC.md's `[entry]` table.
+    """
+
+    agent: str | None = None
+    target: str | None = None
+
+
+@dataclass(frozen=True)
 class BotyardConfig:
     version: int
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
@@ -69,6 +92,8 @@ class BotyardConfig:
     sync: SyncConfig = field(default_factory=SyncConfig)
     targets: dict[str, TargetConfig] = field(default_factory=dict)
     aliases: AliasesConfig = field(default_factory=AliasesConfig)
+    entry: EntryConfig = field(default_factory=EntryConfig)
+    overrides: dict[str, Any] = field(default_factory=dict)
 
 
 # -------------------------

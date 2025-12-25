@@ -21,7 +21,9 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as _tomllib  # type: ignore
 
 
-_TOP_ORDER = ["version", "workspace", "dependencies", "sync", "targets", "aliases"]
+# Note: "assets" is the v0.3+ key; "workspace" is accepted for backward compat (read only).
+_TOP_ORDER = ["version", "assets", "dependencies", "sync", "targets", "aliases"]
+_TOP_ALLOWED = {"version", "assets", "workspace", "dependencies", "sync", "targets", "aliases"}
 
 
 def load_botyard_manifest_raw(path: Path) -> dict[str, Any]:
@@ -57,10 +59,13 @@ def _require_table(path: Path, value: Any, where: str) -> dict[str, Any]:
 
 
 def _canonicalize_and_validate(path: Path, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate schema subset we know how to rewrite, and normalize shapes."""
+    """Validate schema subset we know how to rewrite, and normalize shapes.
 
-    allowed_top = set(_TOP_ORDER)
-    unknown = set(data.keys()) - allowed_top
+    Accepts both [assets] (v0.3+) and [workspace] (legacy) for reading,
+    but canonicalizes to "assets" internally.
+    """
+
+    unknown = set(data.keys()) - _TOP_ALLOWED
     if unknown:
         keys = ", ".join(sorted(unknown))
         raise ConfigValidationError(path=path, message=f"unknown keys: {keys}")
@@ -72,9 +77,15 @@ def _canonicalize_and_validate(path: Path, data: dict[str, Any]) -> dict[str, An
 
     out: dict[str, Any] = {"version": int(data["version"])}
 
-    if "workspace" in data:
-        ws = _require_table(path, data.get("workspace"), "workspace")
-        out["workspace"] = dict(ws)
+    # Accept both [assets] (v0.3+) and [workspace] (legacy), canonicalize to "assets".
+    assets_raw = data.get("assets")
+    ws_raw = data.get("workspace")
+    if assets_raw is not None and ws_raw is not None:
+        raise ConfigValidationError(path=path, message="cannot have both [assets] and [workspace]; use [assets]")
+    combined_assets = assets_raw if assets_raw is not None else ws_raw
+    if combined_assets is not None:
+        assets_tbl = _require_table(path, combined_assets, "assets")
+        out["assets"] = dict(assets_tbl)
 
     deps_raw = data.get("dependencies")
     if deps_raw is None:
@@ -154,14 +165,15 @@ def save_botyard_manifest(path: Path, data: dict[str, Any]) -> None:
     lines: list[str] = []
     lines.append(f"version = {toml_value(d['version'])}")
 
-    ws = d.get("workspace")
-    if isinstance(ws, dict) and ws:
+    # Always emit [assets] (v0.3+), even if input used [workspace].
+    assets = d.get("assets")
+    if isinstance(assets, dict) and assets:
         lines.append("")
-        lines.append("[workspace]")
+        lines.append("[assets]")
         # Keep schema-known keys in a fixed order; omit absent keys.
         for k in ("dir", "name", "private"):
-            if k in ws:
-                lines.append(f"{k} = {toml_value(ws[k])}")
+            if k in assets:
+                lines.append(f"{k} = {toml_value(assets[k])}")
 
     deps: dict[str, Any] = d.get("dependencies") or {}
     if deps:
